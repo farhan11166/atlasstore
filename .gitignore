@@ -1,0 +1,9 @@
+# Env
+.env
+# Binaries
+bin/
+*.exe
+# Storage data
+data/
+# Go build cache
+vendor/
