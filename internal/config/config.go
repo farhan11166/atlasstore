@@ -17,7 +17,7 @@ type Config struct{
     DBUser string
     DBPassword string
 	DBName            string
-	DBSDN             string // assembled connection string
+	DBDSN             string // assembled connection string
 	JWTSecret         string
 	JWTExpiryHours    int
 	ChunkSizeMB       int
@@ -60,17 +60,14 @@ func Load() (*Config,error){
 	if err != nil {
 		return nil, fmt.Errorf("invalid CHUNK_SIZE_MB: %w", err)
 	}
-	cfg.ChunkSizeMB, err = strconv.Atoi(getEnv("CHUNK_SIZE_MB", "5"))
-	if err != nil {
-		return nil, fmt.Errorf("invalid CHUNK_SIZE_MB: %w", err)
-	}
+
 	cfg.ReplicationFactor, err = strconv.Atoi(getEnv("REPLICATION_FACTOR", "3"))
 	if err != nil {
 		return nil, fmt.Errorf("invalid REPLICATION_FACTOR: %w", err)
 	}
 
 	// Assemble the DSN (Data Source Name) for database/sql / lib/pq
-	cfg.DBSDN = fmt.Sprintf(
+	cfg.DBDSN = fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBPassword, cfg.DBName,
 	)

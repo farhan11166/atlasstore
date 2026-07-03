@@ -11,241 +11,284 @@
 AtlasStore/
 ├── cmd/
 │   ├── gateway/
-│   │   └── main.go          ← Entry point for the API Gateway process
+│   │   └── main.go          ← Entry point: API Gateway process (port 8000)
 │   └── storagenode/
-│       └── (empty)          ← Future: Entry point for Storage Node process
+│       └── main.go          ← Entry point: Storage Node process (port 9000)
 │
-├── internal/                ← Private application code (not importable by outside packages)
+├── internal/                ← Private application code
 │   ├── config/
-│   │   └── config.go        ← Reads .env, returns a typed *Config struct
+│   │   └── config.go        ← Reads .env → typed *Config struct
 │   ├── db/
-│   │   ├── db.go            ← Opens PostgreSQL connection, returns *sql.DB
-│   │   └── migrate.go       ← Runs pending SQL migrations on startup
-│   ├── auth/                ← (empty) Future: JWT handlers, middleware
-│   ├── api/                 ← (empty) Future: HTTP route handlers
-│   └── storage/             ← (empty) Future: Local disk chunk read/write
+│   │   ├── db.go            ← Opens PostgreSQL connection pool
+│   │   ├── migrate.go       ← Runs SQL migrations on startup
+│   │   └── user_repo.go     ← CreateUser, GetUserByEmail DB queries
+│   ├── auth/
+│   │   ├── handler.go       ← Register + Login HTTP handlers
+│   │   └── middleware.go    ← JWT validation middleware (used in Week 3+)
+│   ├── api/
+│   │   └── router.go        ← HTTP route wiring (all routes defined here)
+│   └── storage/
+│       └── disk.go          ← Chunk save/read/delete on local disk
 │
 ├── migrations/
-│   ├── 000001_init_schema.up.sql    ← Creates: users, objects, chunks tables
-│   └── 000001_init_schema.down.sql ← Drops:   chunks, objects, users (reverse order)
+│   ├── 000001_init_schema.up.sql    ← Creates users, objects, chunks tables
+│   └── 000001_init_schema.down.sql ← Drops tables (rollback)
 │
-├── api/                     ← (empty) Future: OpenAPI / Protobuf definitions
-├── pkg/                     ← (empty) Future: Reusable library code
-│
-├── docker-compose.yml       ← Spins up PostgreSQL container
+├── docker-compose.yml       ← Runs PostgreSQL on host port 5433
 ├── go.mod                   ← Module: github.com/farhan/atlasstore
-├── go.sum                   ← Dependency lock file
-└── .env                     ← Runtime secrets and config values (never commit this)
+├── .env                     ← Runtime config (ports, DB creds, JWT secret)
+└── data/                    ← Created at runtime by storage node
+    └── node1/               ← Chunk files stored here (named by SHA-256 hash)
 ```
+
+---
+
+## Two-Server Architecture
+
+AtlasStore runs as **two separate processes** — this is intentional distributed systems design:
+
+```
+CLIENT
+  │  HTTP :8000
+  ▼
+┌─────────────────────────────────────┐
+│  GATEWAY (cmd/gateway/main.go)      │  ← "Brain" / Control Plane
+│  - Handles auth (JWT)               │
+│  - Talks to PostgreSQL              │
+│  - Orchestrates chunk distribution  │
+└─────────────────────────────────────┘
+  │  Internal HTTP calls to :9000
+  ▼
+┌─────────────────────────────────────┐
+│  STORAGE NODE (cmd/storagenode/)    │  ← "Muscle" / Data Plane
+│  - No auth, no database             │
+│  - Just saves/reads bytes on disk   │
+│  - One node per machine in prod     │
+└─────────────────────────────────────┘
+```
+
+In production: 1 gateway + 3+ storage nodes on separate machines. Locally: 2 terminals.
 
 ---
 
 ## File-by-File Breakdown
 
 ### `.env`
-The single source of truth for all runtime configuration.
 
 | Variable | Used By | Purpose |
 |---|---|---|
-| `GATEWAY_PORT` | config.go → main.go | Port the API Gateway HTTP server listens on |
-| `STORAGE_NODE_PORT` | config.go | Port each storage node listens on |
-| `DB_HOST/PORT/USER/PASSWORD/NAME` | config.go → db.go | Assembled into the DSN connection string |
-| `JWT_SECRET` | config.go → future auth | Signs and verifies JWT tokens |
-| `JWT_EXPIRY_HOURS` | config.go | How long a login token is valid |
-| `CHUNK_SIZE_MB` | config.go → future storage | Max size of each file chunk |
-| `REPLICATION_FACTOR` | config.go → future gateway | How many nodes receive each chunk |
+| `GATEWAY_PORT` | config → main.go | Port the API Gateway listens on |
+| `STORAGE_NODE_PORT` | config → storagenode | Port each storage node listens on |
+| `DB_*` | config → db.go | Assembled into PostgreSQL DSN |
+| `JWT_SECRET` | config → auth/handler.go | Signs and verifies JWT tokens |
+| `JWT_EXPIRY_HOURS` | config → auth/handler.go | Token validity duration |
+| `CHUNK_SIZE_MB` | config → (Week 3) | Max size per chunk |
+| `REPLICATION_FACTOR` | config → (Week 3) | How many nodes receive each chunk |
+| `STORAGE_DATA_DIR` | storagenode/main.go | Overrides default `./data/chunks` dir |
 
 ---
 
 ### `internal/config/config.go`
 
-**What it does:** Loads `.env` into a Go struct so all other code gets typed values instead of raw strings.
-
-**Key function:** `Load() (*Config, error)`
-
 **Flow:**
 ```
-godotenv.Load()          ← reads .env file into os environment
-    ↓
-os.LookupEnv(key)        ← getEnv() reads each variable with a fallback default
-    ↓
-Config{} struct literal  ← all string fields populated
-    ↓
-Validation               ← returns error if JWT_SECRET or DB_PASSWORD is empty
-    ↓
-strconv.Atoi()           ← parses integer fields (JWTExpiryHours, ChunkSizeMB, ReplicationFactor)
-    ↓
-fmt.Sprintf(DSN)         ← assembles: "host=... port=... user=... password=... dbname=... sslmode=disable"
-    ↓
+godotenv.Load()          → reads .env into os environment
+os.LookupEnv(key)        → getEnv() reads each var with fallback default
+Config{} struct literal  → all fields populated
+Validation               → fatal if JWT_SECRET or DB_PASSWORD missing
+strconv.Atoi()           → parses int fields (expiry, chunk size, replication)
+fmt.Sprintf(DSN)         → "host=... port=... user=... password=... dbname=..."
 return &cfg, nil
 ```
-
-**Why `*Config` (pointer)?** Avoids copying the whole struct every time it's passed to another function. One struct, many references.
 
 ---
 
 ### `internal/db/db.go`
 
-**What it does:** Opens a connection pool to PostgreSQL and verifies it's reachable.
-
-**Key function:** `Connect(dsn string) (*sql.DB, error)`
-
 **Flow:**
 ```
-sql.Open("postgres", dsn)   ← registers the driver and DSN, does NOT connect yet
-    ↓
-db.Ping()                   ← THIS is what actually connects and tests the DB
-    ↓
-db.SetMaxOpenConns(25)      ← limits simultaneous DB connections (prevents overload)
-db.SetMaxIdleConns(10)      ← keeps 10 connections warm for reuse
-    ↓
-return db, nil              ← *sql.DB is safe for concurrent use across goroutines
+sql.Open("postgres", dsn)  → registers driver+DSN (does NOT connect yet)
+db.Ping()                  → actually tests the connection
+db.SetMaxOpenConns(25)     → connection pool limit
+db.SetMaxIdleConns(10)     → keep 10 warm connections ready
+return db, nil
 ```
-
-**Important:** `sql.Open()` does NOT connect. It just validates the driver name and DSN format. `Ping()` is mandatory to confirm the DB is actually up.
 
 ---
 
 ### `internal/db/migrate.go`
 
-**What it does:** Applies any pending `.up.sql` migration files to the database on startup.
-
-**Key function:** `RunMigrations(db *sql.DB, migrationsPath string) error`
-
 **Flow:**
 ```
-postgres.WithInstance(db, ...)      ← wraps *sql.DB into a migrate-compatible driver
-    ↓
-migrate.NewWithDatabaseInstance()   ← reads migration files from migrationsPath
-    ↓
-m.Up()                              ← applies all unapplied migrations in order
-    ↓
-if err == migrate.ErrNoChange       ← already up to date, not a real error — ignore it
-```
-
-**Migration file naming:**
-```
-000001_init_schema.up.sql    ← number prefix = execution order
-000001_init_schema.down.sql  ← must exist alongside .up for rollback support
-000002_...up.sql             ← next migration, runs after 000001
+postgres.WithInstance(db)          → wraps *sql.DB for migrate library
+migrate.NewWithDatabaseInstance()  → reads .sql files from migrations/
+m.Up()                             → applies all unapplied .up.sql files
+if err == ErrNoChange → ok         → already up to date, not an error
 ```
 
 ---
 
-### `migrations/000001_init_schema.up.sql`
+### `internal/db/user_repo.go`
 
-**Creates three tables:**
+Two functions:
 
+| Function | SQL | Returns |
+|---|---|---|
+| `CreateUser(db, email, hash)` | `INSERT INTO users ... RETURNING id` | `string` (UUID) |
+| `GetUserByEmail(email, db)` | `SELECT ... FROM users WHERE email=$1` | `*User` or `nil` |
+
+`nil, nil` from `GetUserByEmail` means "user not found" — not a system error.
+
+---
+
+### `internal/auth/handler.go`
+
+**Register flow (`POST /auth/register`):**
 ```
-users
-  id          UUID (PK, auto-generated)
-  email       TEXT UNIQUE NOT NULL
-  password    TEXT NOT NULL          ← stores bcrypt hash, never plaintext
-  created_at  TIMESTAMP
-
-objects                              ← one row per uploaded file
-  id          UUID (PK)
-  user_id     UUID → users.id        ← FK: who owns this file
-  name        TEXT                   ← original filename
-  size_bytes  BIGINT
-  content_type TEXT
-  created_at  TIMESTAMPTZ
-
-chunks                               ← one row per piece of a file
-  id          UUID (PK)
-  object_id   UUID → objects.id      ← FK: which file this chunk belongs to
-  chunk_index INT                    ← 0, 1, 2... ordering for reassembly
-  hash        TEXT                   ← SHA-256 of chunk content (integrity check)
-  size        BIGINT
-  node_address TEXT                  ← "http://storagenode1:9000" where chunk lives
-  created_at  TIMESTAMPTZ
-  UNIQUE(object_id, chunk_index)     ← can't have duplicate chunk #3 for same file
+Decode JSON body (email, password)
+Check email not already used → GetUserByEmail
+bcrypt.GenerateFromPassword(password) → hash
+CreateUser(email, hash) → get UUID
+generateToken(UUID) → signed JWT
+Return 201 + {"token": "..."}
 ```
 
-**Relationship diagram:**
+**Login flow (`POST /auth/login`):**
 ```
-users (1) ──────< objects (many)
-                      │
-                      └──────< chunks (many)
+Decode JSON body
+GetUserByEmail → get user row
+bcrypt.CompareHashAndPassword(stored_hash, input_password)
+generateToken(user.ID) → signed JWT
+Return 200 + {"token": "..."}
 ```
+
+**Security rule:** Both wrong-email and wrong-password return the same `"invalid credentials"` — never reveal which one failed.
+
+---
+
+### `internal/auth/middleware.go`
+
+**Status: Built, NOT yet wired to any routes.**
+
+It will be activated in Week 3 when object routes are added in `router.go`.
+
+**Flow when active:**
+```
+Read "Authorization" header
+Split "Bearer <token>" → extract token string
+jwt.Parse(token, verify HMAC signature)
+token.Claims["sub"] → extract userID
+context.WithValue(r.Context(), UserIDKey, userID)
+next.ServeHTTP(w, r.WithContext(ctx))  ← passes modified request downstream
+```
+
+**How handlers use the injected userID (Week 3):**
+```go
+userID := r.Context().Value(auth.UserIDKey).(string)
+```
+
+---
+
+### `internal/api/router.go`
+
+All routes defined here. `main.go` calls `NewRouter()` once and passes the result to `http.ListenAndServe`.
+
+**Current routes:**
+```
+POST /auth/register  →  authHandler.Register   (public)
+POST /auth/login     →  authHandler.Login      (public)
+```
+
+**Upcoming Week 3 routes (commented out):**
+```
+POST   /objects       →  protected → objectHandler.Upload
+GET    /objects       →  protected → objectHandler.List
+GET    /objects/{id}  →  protected → objectHandler.Download
+DELETE /objects/{id}  →  protected → objectHandler.Delete
+```
+
+`protected` = `auth.RequireAuth(cfg.JWTSecret)` wrapping the handler.
+
+---
+
+### `internal/storage/disk.go`
+
+The storage node's handler. Chunks are stored as plain files named by their SHA-256 hash.
+
+| Method | Route | What it does |
+|---|---|---|
+| `SaveChunk` | `POST /chunk` | Reads `X-Chunk-Hash` header, streams body → file on disk |
+| `GetChunk` | `GET /chunk/{hash}` | Opens file by hash name, streams to response |
+| `DeleteChunk` | `DELETE /chunk/{hash}` | `os.Remove()` the file |
+| `Health` | `GET /health` | Returns `{"status":"ok"}` — gateway polls this (Week 3) |
+
+**Key:** `io.Copy(file, r.Body)` streams bytes directly from network to disk — never loads the whole chunk into RAM.
 
 ---
 
 ### `cmd/gateway/main.go`
 
-**What it does:** The startup sequence for the entire API Gateway process.
-
-**Current flow:**
+**Startup sequence:**
 ```
-config.Load()               ← step 1: read all config from .env
-    ↓
-db.Connect(cfg.DBDSN)       ← step 2: open postgres connection pool
-    ↓
-db.RunMigrations(database)  ← step 3: bring DB schema up to date
-    ↓
-[TODO: start HTTP server]   ← step 4: not yet implemented
+1. config.Load()                   ← read .env
+2. db.Connect(cfg.DBDSN)           ← open postgres pool
+3. db.RunMigrations(database)      ← apply pending .up.sql files
+4. api.NewRouter(cfg, database)    ← wire all routes
+5. http.ListenAndServe(:8000)      ← start accepting requests
 ```
 
-**Design principle:** `main()` is the composition root. It creates all dependencies and passes them down. Nothing else calls `config.Load()` — only `main()` does.
+### `cmd/storagenode/main.go`
+
+**Startup sequence:**
+```
+1. config.Load()                   ← read .env
+2. os.Getenv("STORAGE_DATA_DIR")   ← or default to ./data/chunks
+3. storage.NodeHandler{DataDir}    ← create handler with data dir
+4. http.NewServeMux() + routes     ← wire chunk endpoints
+5. http.ListenAndServe(:9000)      ← start accepting chunk requests
+```
 
 ---
 
-## 🐛 Bugs Found In Your Code
+## Request Flow — Auth (Working Now)
 
-These will cause compile errors or silent runtime failures. Fix these before running.
-
-### `internal/config/config.go`
-
-| Line | Bug | Fix |
-|---|---|---|
-| 18 | `DBPassowrd string` — typo in field name | Change to `DBPassword string` |
-| 42 | `DBPassword:` in struct literal — this will fail to compile because the field is named `DBPassowrd` | Fix the field name on line 18 |
-| 55 | `getEnv("JWT_EXPIRY")` — only one argument, but `getEnv` requires two | `getEnv("JWT_EXPIRY_HOURS", "72")` |
-| 63-66 | `ChunkSizeMB` is parsed **twice** (duplicate block) | Delete lines 63-66, keep only 59-62 |
-| 77 | `return cfg, nil` returns a value, but signature says `*Config` | Change to `return &cfg, nil` |
-
-### `cmd/gateway/main.go`
-
-| Line | Bug | Fix |
-|---|---|---|
-| 16 | `db.connect(...)` — lowercase `c`, Go won't find it | `db.Connect(...)` (capital C) |
-| 16 | `cfg.DBSDN` — typo | `cfg.DBDSN` |
-| 24 | `" file://./migrations"` — leading space in string | `"file://./migrations"` (remove the space) |
-
-### `migrations/000001_init_schema.up.sql`
-
-| Line | Bug | Fix |
-|---|---|---|
-| 6 | `TIMESTAMP NOT NULL` on `users.created_at` | Should be `TIMESTAMPTZ` (with timezone) to match `objects` and `chunks` for consistency |
+```
+curl POST /auth/register
+  │
+  ▼
+router.go → authHandler.Register()
+  │
+  ├── db.GetUserByEmail()     ← check not duplicate
+  ├── bcrypt.Generate()       ← hash the password
+  ├── db.CreateUser()         ← INSERT into users table
+  └── jwt.NewWithClaims()     ← sign token with JWTSecret
+  │
+  ▼
+{"token": "eyJ..."}
+```
 
 ---
 
-## Request Flow (Future — When HTTP server is added)
+## Request Flow — Object Upload (Week 3 — Not Yet Built)
 
 ```
-Client
+curl POST /objects (with Bearer token + file body)
   │
   ▼
-cmd/gateway/main.go        ← starts HTTP server on GATEWAY_PORT
+router.go → RequireAuth middleware
+  │  validates JWT, injects userID into context
+  ▼
+objectHandler.Upload()
+  │
+  ├── read file from request body
+  ├── split into 5MB chunks
+  ├── SHA-256 hash each chunk
+  ├── POST /chunk to storage node (with X-Chunk-Hash header)
+  ├── INSERT into objects table
+  └── INSERT into chunks table (chunk_index, hash, node_address)
   │
   ▼
-internal/api/              ← route handler receives request
-  │  reads JWT from header
-  ▼
-internal/auth/middleware   ← validates JWT, extracts user_id
-  │
-  ▼
-internal/api/handler       ← business logic
-  │  breaks file into chunks
-  │  picks storage nodes
-  ▼
-internal/db/               ← saves object + chunk metadata to PostgreSQL
-  │
-  ▼
-Storage Node (HTTP)        ← receives chunk bytes via POST /chunk
-  │
-  ▼
-internal/storage/          ← writes chunk to local disk
+{"id": "uuid-of-object"}
 ```
 
 ---
@@ -254,10 +297,9 @@ internal/storage/          ← writes chunk to local disk
 
 | Component | Location | Needed For |
 |---|---|---|
-| HTTP server | `cmd/gateway/main.go` | Any API to work |
-| Route handlers | `internal/api/` | Upload, download, delete, list |
-| Auth handlers | `internal/auth/` | Register, login endpoints |
-| JWT middleware | `internal/auth/` | Protecting routes |
-| Chunk storage logic | `internal/storage/` | Writing/reading chunk files to disk |
-| Storage node server | `cmd/storagenode/` | Receiving chunks from gateway |
-| DB repository layer | `internal/db/` | Typed CRUD functions for users/objects/chunks |
+| Object handlers | `internal/api/` | Upload, download, list, delete |
+| Middleware wired | `router.go` (uncomment) | Protecting object routes |
+| DB object/chunk repo | `internal/db/` | Saving file + chunk metadata |
+| SHA-256 chunking logic | `internal/api/` | Breaking files into pieces |
+| Health-check polling | gateway → storage nodes | Detecting dead nodes |
+| Web dashboard | `web/` or `static/` | Week 4 frontend |

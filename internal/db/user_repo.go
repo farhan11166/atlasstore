@@ -30,7 +30,7 @@ func GetUserByEmail(email string, db *sql.DB) (*User,error){
 	u := &User{}
 	query:= `SELECT id, email, password, created_at FROM users WHERE email = $1`
 	err:=db.QueryRow(query,email).Scan(&u.ID,&u.Email,&u.Password,&u.CreatedAt)
-	if errors.Is(err,sql.ErrNoRows){return nil,nil}
+	if errors.Is(err,sql.ErrNoRows){return nil,nil} // user does not exissst
 
 	if err != nil{
 		return nil, fmt.Errorf("get user y email: %w",err)

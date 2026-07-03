@@ -18,28 +18,28 @@ AtlasStore is **not** a Dropbox clone. It is a distributed object storage system
 ## Phase 1 — MVP (Resume Ready)
 *Target: Weeks 1-4*
 
-### Week 1: Project Foundation & Metadata Layer
-- [ ] **1.1 Project Initialization & Infrastructure**
-  - [ ] Initialize Go module (`go mod init github.com/yourusername/atlasstore`).
-  - [ ] Define standard Go project layout (`cmd/`, `internal/`, `pkg/`, `api/`).
-  - [ ] Create a `docker-compose.yml` (PostgreSQL, API Gateway, 3 Storage Nodes).
-  - [ ] Set up basic configuration management (e.g., reading from `.env` or YAML).
-- [ ] **1.2 Metadata Layer (PostgreSQL)**
-  - [ ] Define database schemas (`users`, `objects`, `chunks`).
-  - [ ] Set up database migration scripts (using a tool like `golang-migrate`).
-  - [ ] Implement Go repository layer for connecting to PostgreSQL and performing CRUD operations.
+### Week 1: Project Foundation & Metadata Layer ✅
+- [x] **1.1 Project Initialization & Infrastructure**
+  - [x] Initialize Go module (`go mod init github.com/farhan/atlasstore`).
+  - [x] Define standard Go project layout (`cmd/`, `internal/`, `pkg/`, `api/`).
+  - [x] Create a `docker-compose.yml` (PostgreSQL on port 5433).
+  - [x] Set up configuration management (`internal/config/config.go` reads from `.env`).
+- [x] **1.2 Metadata Layer (PostgreSQL)**
+  - [x] Define database schemas (`users`, `objects`, `chunks`) in `migrations/000001_init_schema.up.sql`.
+  - [x] Set up migration scripts using `golang-migrate` (`internal/db/migrate.go`).
+  - [x] Implement DB connection layer (`internal/db/db.go`) + user repository (`internal/db/user_repo.go`).
 
-### Week 2: Auth & Storage Nodes
-- [ ] **1.3 Authentication**
-  - [ ] Implement User Registration REST endpoint (`POST /auth/register`).
-  - [ ] Implement User Login REST endpoint with JWT generation (`POST /auth/login`).
-  - [ ] Create JWT validation middleware to protect API routes.
-- [ ] **1.4 Storage Nodes (Data Plane)**
-  - [ ] Implement local disk storage logic (saving/reading files from disk).
-  - [ ] Create a basic HTTP server for each storage node.
-  - [ ] Implement `POST /chunk` to receive and save a chunk.
-  - [ ] Implement `GET /chunk/{hash}` to stream a chunk back.
-  - [ ] Implement `DELETE /chunk/{hash}` to remove a chunk from disk.
+### Week 2: Auth & Storage Nodes ✅
+- [x] **1.3 Authentication**
+  - [x] Implement User Registration REST endpoint `POST /auth/register` (`internal/auth/handler.go`).
+  - [x] Implement User Login REST endpoint with JWT generation `POST /auth/login` (`internal/auth/handler.go`).
+  - [x] Create JWT validation middleware (`internal/auth/middleware.go`) — wired in Week 3 when object routes are added.
+- [x] **1.4 Storage Nodes (Data Plane)**
+  - [x] Implement local disk storage logic (`internal/storage/disk.go`).
+  - [x] Create HTTP server for storage node (`cmd/storagenode/main.go`).
+  - [x] Implement `POST /chunk` — saves chunk to disk.
+  - [x] Implement `GET /chunk/{hash}` — streams chunk from disk.
+  - [x] Implement `DELETE /chunk/{hash}` — removes chunk from disk.
 
 ### Week 3: API Gateway (Control Plane)
 - [ ] **1.5 API Gateway Logic**
