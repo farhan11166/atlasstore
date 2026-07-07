@@ -27,6 +27,7 @@ func NewRouter(cfg *config.Config, database *sql.DB) http.Handler {
 
 	mux.HandleFunc("POST /auth/register", authHandler.Register)
 	mux.HandleFunc("POST /auth/login", authHandler.Login)
+	mux.Handle("/", http.FileServer(http.Dir("./web")))
 
 	// Protected routes — Week 3, uncomment when object handlers exist
 	mux.Handle("POST /objects", protected(http.HandlerFunc(objectHandler.Upload)))

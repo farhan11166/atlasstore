@@ -49,15 +49,15 @@ AtlasStore is **not** a Dropbox clone. It is a distributed object storage system
   - [x] `GET /objects` — lists all objects owned by the authenticated user.
   - [x] JWT middleware wired — all object routes protected by `auth.RequireAuth`.
 
-### Week 4: Dashboard & Wrap-Up
-- [ ] **1.6 Simple Web Dashboard**
-  - [ ] Create a vanilla HTML/JS/CSS frontend.
-  - [ ] Implement file upload UI with a progress indicator.
-  - [ ] Implement a file list with download and delete buttons.
-- [ ] **1.7 MVP Finalization**
-  - [ ] Write a comprehensive `README.md` with setup/run instructions.
-  - [ ] Create a system architecture diagram.
-  - [ ] Record a demo video for resume/portfolio.o
+### Week 4: Dashboard & Wrap-Up ✅
+- [x] **1.6 Simple Web Dashboard**
+  - [x] Create a vanilla HTML/JS/CSS frontend.
+  - [x] Implement file upload UI with a progress indicator.
+  - [x] Implement a file list with download and delete buttons.
+- [x] **1.7 MVP Finalization**
+  - [x] Write a comprehensive `README.md` with setup/run instructions.
+  - [x] Create a system architecture diagram (in README/internal).
+  - [x] Record a demo video for resume/portfolio.
 
 ---
 

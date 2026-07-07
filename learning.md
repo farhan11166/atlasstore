@@ -42,6 +42,11 @@
 26. [Object Storage — What Problem It Solves](#26-object-storage)
 27. [Chunking — Why Files Are Split](#27-chunking)
 
+**Week 4 (Frontend)**
+28. [Serving Static Files in Go](#28-serving-static-files-in-go)
+29. [XMLHttpRequest vs Fetch for Uploads](#29-xmlhttprequest-vs-fetch-for-uploads)
+30. [Downloading via Object URLs](#30-downloading-via-object-urls)
+
 ---
 
 ## 1. Why Go?
@@ -458,6 +463,57 @@ Meta   = name, size_bytes, content_type
 4. **Integrity** — SHA-256 hash each chunk, re-verify on download (Phase 2)
 
 **Reassembly:** `chunks.chunk_index` determines order. Always `ORDER BY chunk_index` → concatenate → original file.
+
+---
+
+## 28. Serving Static Files in Go
+
+```go
+mux.Handle("/", http.FileServer(http.Dir("./web")))
+```
+Go's built-in file server makes hosting SPAs (Single Page Applications) incredibly easy. 
+- It automatically maps URL paths to files in the `./web` directory.
+- It automatically sets the correct `Content-Type` headers (`text/html`, `text/css`, `application/javascript`) based on file extensions.
+- In `ServeMux`, longer matching routes take precedence. `/auth/login` is handled by the API, while a request to `/` falls back to the FileServer.
+
+---
+
+## 29. XMLHttpRequest vs Fetch for Uploads
+
+You might have noticed we used `fetch()` for Login and Delete, but `XMLHttpRequest` (XHR) for Uploads. Why?
+
+**The problem with `fetch()`:** It does not currently support *upload progress events*. You only know when the upload is 0% and 100%.
+
+**The XHR solution:**
+```js
+xhr.upload.onprogress = (e) => {
+    const pct = Math.round((e.loaded / e.total) * 100)
+    updateProgressBar(pct)
+}
+```
+XHR natively emits progress events as chunks of the TCP payload are acknowledged by the server. This allows us to build a smooth, real-time progress bar.
+
+---
+
+## 30. Downloading via Object URLs
+
+How do you force a file download via an API secured by a JWT? You can't just use `<a href="/objects/123">` because you can't attach an `Authorization` header to standard HTML links.
+
+**The Object URL Pattern:**
+1. Fetch the file via JS using the token.
+2. Convert the response into a binary `Blob` (Browser memory).
+3. Create a temporary internal browser URL pointing to that Blob.
+4. Create an invisible `<a>` tag, click it programmatically, and clean up.
+
+```js
+const blob = await res.blob()
+const url = URL.createObjectURL(blob) // looks like: blob:http://localhost:8000/1234-5678
+const a = document.createElement('a')
+a.href = url
+a.download = "filename.txt"
+a.click() 
+URL.revokeObjectURL(url) // free memory
+```
 
 ---
 

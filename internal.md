@@ -42,6 +42,11 @@ AtlasStore/
 │   └── node1/                       ← Created at runtime
 │       └── 4dcfa58d...              ← Chunk files named by SHA-256 hash
 │
+├── web/                             ← Vanilla HTML/JS/CSS Dashboard
+│   ├── index.html                   
+│   ├── style.css
+│   └── app.js
+│
 ├── docker-compose.yml  ← PostgreSQL on host port 5433
 ├── go.mod              ← Module: github.com/farhan/atlasstore
 └── .env                ← Runtime config (never commit)
@@ -249,9 +254,6 @@ objectHandler.Delete()
 
 | Component | Location | Needed For |
 |---|---|---|
-| Web dashboard | `web/` or `static/` | Week 4 — file upload UI |
-| README.md | root | Week 4 — setup instructions |
-| Architecture diagram | root | Week 4 — portfolio |
 | SHA-256 integrity check on download | object_handler | Phase 2 — re-hash chunk, compare |
 | Parallel chunk I/O | object_handler | Phase 2 — goroutines |
 | Health-check polling | gateway | Phase 3 — detect dead nodes |

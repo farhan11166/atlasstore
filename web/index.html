@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AtlasStore — Distributed Object Storage</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+
+    <!-- Toast container -->
+    <div id="toast-container"></div>
+
+    <!-- ── LOGIN VIEW ── -->
+    <div id="login-view">
+      <div class="login-bg-glow"></div>
+      <div class="login-wrapper">
+        <div class="login-brand">
+          <div class="brand-icon">⬡</div>
+          <h1>AtlasStore</h1>
+          <p class="brand-sub">Distributed Object Storage</p>
+        </div>
+        <div id="auth-card">
+          <h2 id="auth-title">Welcome back</h2>
+          <p id="auth-subtitle">Sign in to your storage vault</p>
+          <div class="input-group">
+            <label>Email</label>
+            <input type="email" id="email" placeholder="you@example.com" autocomplete="email" />
+          </div>
+          <div class="input-group">
+            <label>Password</label>
+            <input type="password" id="password" placeholder="••••••••" autocomplete="current-password" />
+          </div>
+          <button id="auth-btn" onclick="submitAuth()">
+            <span id="auth-btn-text">Sign In</span>
+            <span id="auth-btn-loader" class="btn-loader" style="display:none"></span>
+          </button>
+          <p id="toggle-text">
+            Don't have an account? <a href="#" onclick="toggleMode()">Create one</a>
+          </p>
+          <p id="auth-error"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── DASHBOARD VIEW ── -->
+    <div id="dashboard-view" style="display:none">
+
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="sidebar-brand">
+          <div class="brand-icon-sm">⬡</div>
+          <span>AtlasStore</span>
+        </div>
+        <nav class="sidebar-nav">
+          <a class="nav-item active" href="#">
+            <span class="nav-icon">◫</span> Files
+          </a>
+        </nav>
+        <div class="sidebar-footer">
+          <button class="logout-btn" onclick="logout()">
+            <span>⎋</span> Sign out
+          </button>
+        </div>
+      </aside>
+
+      <!-- Main content -->
+      <main class="main-content">
+
+        <!-- Header -->
+        <div class="top-bar">
+          <div>
+            <h2 class="page-title">My Files</h2>
+            <p class="page-subtitle" id="file-stats">Loading...</p>
+          </div>
+          <button class="upload-btn" onclick="document.getElementById('file-input').click()">
+            <span>+</span> Upload File
+          </button>
+          <input type="file" id="file-input" style="display:none" onchange="uploadFile(this.files[0])" />
+        </div>
+
+        <!-- Upload drop zone -->
+        <div id="upload-area">
+          <div class="upload-icon">↑</div>
+          <p class="upload-label">Drag & drop files here</p>
+          <p class="upload-hint">or use the Upload button above · any file type supported</p>
+        </div>
+
+        <!-- Progress -->
+        <div id="progress-wrapper" style="display:none">
+          <div class="progress-info">
+            <span id="upload-filename"></span>
+            <span id="progress-text">0%</span>
+          </div>
+          <div id="progress-track">
+            <div id="progress-bar"></div>
+          </div>
+        </div>
+
+        <!-- File list -->
+        <div id="file-section">
+          <div id="skeleton-list">
+            <div class="skeleton-row"></div>
+            <div class="skeleton-row"></div>
+            <div class="skeleton-row"></div>
+          </div>
+          <table id="file-table" style="display:none">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Size</th>
+                <th>Type</th>
+                <th style="text-align:right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="file-list"></tbody>
+          </table>
+          <div id="empty-state" style="display:none">
+            <div class="empty-icon">◫</div>
+            <p class="empty-title">No files yet</p>
+            <p class="empty-hint">Upload your first file to get started</p>
+          </div>
+        </div>
+
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
