@@ -1,5 +1,8 @@
 # AtlasStore
 
+🚧 Status: Active Development (Phase 1 MVP Complete) 🚧
+Currently building Phase 2 (Parallel I/O and Checksum Integrity).
+
 > A distributed object storage platform built in Go.
 
 AtlasStore is a learning-focused implementation of a distributed object storage system, heavily inspired by Amazon S3 and MinIO. It separates the Control Plane (API Gateway) from the Data Plane (Storage Nodes) to orchestrate chunked file uploads, distributed storage, and file reassembly.
@@ -48,17 +51,22 @@ AtlasStore is a learning-focused implementation of a distributed object storage 
 ## ⚙️ Getting Started
 
 ### Prerequisites
+
 - [Go 1.24+](https://go.dev/)
 - [Docker & Docker Compose](https://www.docker.com/)
 
 ### 1. Setup Database
+
 Start the PostgreSQL container:
+
 ```bash
 docker-compose up -d
 ```
 
 ### 2. Configure Environment
+
 Ensure your `.env` file looks like this:
+
 ```env
 DB_HOST=localhost
 DB_PORT=5433
@@ -75,20 +83,25 @@ STORAGE_NODE_PORT=9000
 ```
 
 ### 3. Run the Servers
+
 You need to run the Gateway and the Storage Node in two separate terminal windows.
 
 **Terminal 1 (Gateway):**
+
 ```bash
 go run ./cmd/gateway/
 ```
-*(This will automatically run database migrations and serve the frontend on port 8000).*
+
+_(This will automatically run database migrations and serve the frontend on port 8000)._
 
 **Terminal 2 (Storage Node):**
+
 ```bash
 STORAGE_DATA_DIR=./data/node1 go run ./cmd/storagenode/
 ```
 
 ### 4. Access the Dashboard
+
 Open your browser and navigate to:
 **[http://localhost:8000](http://localhost:8000)**
 
@@ -96,7 +109,8 @@ Open your browser and navigate to:
 
 ## 📚 Internal Documentation
 
-For deep dives into *how* and *why* this system is built the way it is, check out:
+For deep dives into _how_ and _why_ this system is built the way it is, check out:
+
 - [`internal.md`](./internal.md) — Directory maps, request flows, and component breakdown.
 - [`learning.md`](./learning.md) — Concept explanations (Connection Pooling, Hashing, Streaming, JWTs).
 - [`PLAN.md`](./PLAN.md) — The development roadmap and upcoming distributed systems features.
