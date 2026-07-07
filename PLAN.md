@@ -41,12 +41,13 @@ AtlasStore is **not** a Dropbox clone. It is a distributed object storage system
   - [x] Implement `GET /chunk/{hash}` — streams chunk from disk.
   - [x] Implement `DELETE /chunk/{hash}` — removes chunk from disk.
 
-### Week 3: API Gateway (Control Plane)
-- [ ] **1.5 API Gateway Logic**
-  - [ ] Implement `POST /objects` (Upload): Stream the incoming file, break it into fixed-size chunks, distribute chunks to 3 storage nodes, and save metadata.
-  - [ ] Implement `GET /objects/{id}` (Download): Fetch chunk metadata, pull chunks from storage nodes, reassemble, and stream to client.
-  - [ ] Implement `DELETE /objects/{id}`: Delete from DB and signal storage nodes to remove chunks.
-  - [ ] Implement `GET /objects`: List user's uploaded files.
+### Week 3: API Gateway (Control Plane) ✅
+- [x] **1.5 API Gateway Logic**
+  - [x] `POST /objects` — reads body, splits into chunks, SHA-256 hashes each, POSTs to storage node, saves metadata to DB (`internal/api/object_handler.go`).
+  - [x] `GET /objects/{id}` — fetches chunk rows from DB, pulls bytes from storage node in order, streams reassembled file to client.
+  - [x] `DELETE /objects/{id}` — deletes DB row (cascades to chunks), signals storage node to remove chunk files.
+  - [x] `GET /objects` — lists all objects owned by the authenticated user.
+  - [x] JWT middleware wired — all object routes protected by `auth.RequireAuth`.
 
 ### Week 4: Dashboard & Wrap-Up
 - [ ] **1.6 Simple Web Dashboard**

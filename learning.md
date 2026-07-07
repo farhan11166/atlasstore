@@ -7,155 +7,127 @@
 
 ## Table of Contents
 
-**Week 1 Concepts**
+**Week 1**
 1. [Why Go?](#1-why-go)
 2. [Go Module System](#2-go-module-system)
-3. [Project Layout — Why `internal/` and `cmd/`?](#3-project-layout)
+3. [Project Layout — `internal/` and `cmd/`](#3-project-layout)
 4. [Configuration Management](#4-configuration-management)
-5. [Database — PostgreSQL Fundamentals](#5-database--postgresql-fundamentals)
-6. [Database Migrations — Why They Exist](#6-database-migrations)
+5. [PostgreSQL Fundamentals](#5-postgresql-fundamentals)
+6. [Database Migrations](#6-database-migrations)
 7. [Connection Pooling](#7-connection-pooling)
 8. [UUIDs as Primary Keys](#8-uuids-as-primary-keys)
 9. [Foreign Keys and Cascading Deletes](#9-foreign-keys-and-cascading-deletes)
 10. [What is a DSN?](#10-what-is-a-dsn)
 11. [Error Wrapping in Go](#11-error-wrapping-in-go)
 12. [Go Pointers — When and Why](#12-go-pointers--when-and-why)
-13. [Blank Imports (`_ "package"`)](#13-blank-imports)
+13. [Blank Imports](#13-blank-imports)
 
-**Week 2 Concepts**
+**Week 2**
 14. [Password Hashing with bcrypt](#14-password-hashing-with-bcrypt)
 15. [JWT — JSON Web Tokens](#15-jwt--json-web-tokens)
 16. [HTTP Middleware Pattern](#16-http-middleware-pattern)
-17. [Go Context — Passing Data Through a Request](#17-go-context--passing-data-through-a-request)
-18. [Struct-Based Handlers (Dependency Injection)](#18-struct-based-handlers-dependency-injection)
-19. [Two-Server Architecture — Gateway vs Storage Node](#19-two-server-architecture)
-20. [Why `io.Copy` Instead of `ReadAll`](#20-why-iocopy-instead-of-readall)
+17. [Go Context — Passing Data Through a Request](#17-go-context)
+18. [Struct-Based Handlers (Dependency Injection)](#18-struct-based-handlers)
+19. [Two-Server Architecture](#19-two-server-architecture)
+20. [Why `io.Copy` Instead of `ReadAll`](#20-why-iocopy)
+
+**Week 3**
+21. [SHA-256 — Content Hashing](#21-sha-256--content-hashing)
+22. [io.ReadFull — Reading Fixed-Size Chunks](#22-ioreadfull)
+23. [Streaming HTTP Responses](#23-streaming-http-responses)
+24. [Ownership Enforcement in SQL vs Code](#24-ownership-enforcement-in-sql-vs-code)
+25. [Best-Effort Operations](#25-best-effort-operations)
 
 **Object Storage Concepts**
-21. [Object Storage — What Problem It Solves](#21-object-storage--what-problem-it-solves)
-22. [Chunking — Why Files Are Split](#22-chunking--why-files-are-split)
+26. [Object Storage — What Problem It Solves](#26-object-storage)
+27. [Chunking — Why Files Are Split](#27-chunking)
 
 ---
 
 ## 1. Why Go?
 
-Go was designed at Google for **network services and infrastructure**. That makes it a perfect fit for AtlasStore.
+Go was designed at Google for **network services and infrastructure**.
 
-| Property | What It Means For You |
+| Property | What It Means |
 |---|---|
-| **Compiled** | Single binary — easy to ship to servers |
-| **Goroutines** | Lightweight threads — handle thousands of simultaneous uploads cheaply |
-| **Standard library** | Built-in HTTP server, crypto, file I/O — no framework needed |
+| **Compiled** | Single binary — easy to ship |
+| **Goroutines** | Lightweight threads — handle thousands of connections cheaply |
+| **Standard library** | Built-in HTTP, crypto, file I/O — no framework needed |
 | **Static typing** | Compiler catches bugs before runtime |
-| **Fast compilation** | Feedback loop is seconds, not minutes |
 
-Python would be simpler but would struggle at the concurrency scale that storage systems require. Rust would be faster but far harder to write. Go is why MinIO, Docker, and Kubernetes are all written in it.
+Why MinIO, Docker, and Kubernetes are all written in Go.
 
 ---
 
 ## 2. Go Module System
 
 ```
-module github.com/farhan/atlasstore   ← import path prefix for YOUR code
-go 1.24.0                             ← minimum Go version
-require (...)                         ← external dependencies with versions
+module github.com/farhan/atlasstore   ← unique import path prefix
+go 1.24.0
+require (...)                          ← locked dependencies
 ```
 
-**Why the import path looks like a GitHub URL:** Go uses URLs as globally unique package names. It doesn't mean your code must be on GitHub — it's a naming convention that guarantees no two packages in the world collide.
-
-**`go.sum`:** A cryptographic lock file. Every dependency has a hash. If someone tampers with a library, `go.sum` fails. You never edit it manually.
+`go.sum` = cryptographic lock file. If a dependency is tampered with, `go.sum` fails. Never edit manually.
 
 ---
 
 ## 3. Project Layout
 
-### Why `cmd/`?
-Holds **executable entry points** — programs you can run.
-```
-cmd/gateway/main.go      → builds the API Gateway binary
-cmd/storagenode/main.go  → builds the Storage Node binary
-```
-One repository, two runnable programs.
-
-### Why `internal/`?
-A **Go compiler enforcement rule** — any package inside `internal/` can ONLY be imported by code in the parent module. External modules cannot import your internal packages, enforcing that implementation details stay private.
-
-### Why `pkg/`?
-For code you'd eventually share as a standalone library. Opposite of `internal/`.
+**`cmd/`** — executable entry points (one `main.go` per binary)
+**`internal/`** — Go compiler enforces that ONLY this module can import these packages
+**`pkg/`** — code you'd eventually share as a library
 
 ---
 
 ## 4. Configuration Management
 
-**The problem:** You need passwords and secrets at runtime without hardcoding them.
+`.env` + `godotenv` = development convenience. `godotenv.Load()` calls `os.Setenv()` for each key.
 
-**Solution:** Environment variables. The `.env` file + `godotenv` is a development convenience:
-```
-godotenv.Load() → reads KEY=VALUE from .env → calls os.Setenv() for each
-```
+**Why a typed `Config` struct:** Raw env vars are all strings. Parsing once at startup gives typed values everywhere and fails fast on bad config — not silently mid-request.
 
-**Why `.env` is in `.gitignore`:** It contains real secrets. In production, env vars are set directly on the server or via a secrets manager — never committed to git.
-
-**Why a typed `Config` struct:** Raw env vars are all strings. Parsing once at startup gives you typed values everywhere and fails fast if anything is missing or malformed.
+**Why `.env` is in `.gitignore`:** Contains real secrets. In production, set env vars directly on the server.
 
 ---
 
-## 5. Database — PostgreSQL Fundamentals
+## 5. PostgreSQL Fundamentals
 
-Data is stored in **tables** connected by **foreign keys**. SQL is how you talk to it.
+`database/sql` = Go standard interface. `lib/pq` = PostgreSQL-specific driver that implements it. You write against `database/sql` — driver is swappable.
 
-**`database/sql` vs `lib/pq`:**
-```
-database/sql    ← Go standard library interface (generic)
-lib/pq          ← PostgreSQL-specific driver that implements it
-```
-You write code against `database/sql` — if you switch drivers later, only one import changes.
+**`sql.Open()` does NOT connect.** It validates the driver name. `db.Ping()` is what actually tests the connection.
 
 ---
 
 ## 6. Database Migrations
 
-**The problem:** Your schema evolves over time. How do you track which changes have been applied to which database?
+Numbered SQL files tracked in a `schema_migrations` table. `golang-migrate` applies only unapplied files on startup:
 
-**Solution:** Numbered SQL files. `golang-migrate` tracks applied files in a `schema_migrations` table:
 ```
-000001_init_schema.up.sql      ← applied ✓
-000002_add_role.up.sql         ← pending → applies automatically on next startup
+000001 ✓ (already applied)
+000002 → applies automatically
 ```
 
-**`.up` / `.down` pair:** Every migration has a reverse. Drop order must be reverse of create order (FK constraints):
-```sql
-DROP TABLE chunks;   ← depends on objects, drop first
-DROP TABLE objects;  ← depends on users, drop second
-DROP TABLE users;    ← drop last
-```
+**`.up` / `.down` pair:** Every migration has a reverse. Drop order must be reverse of create order — FK constraints prevent dropping a table that others reference.
 
 ---
 
 ## 7. Connection Pooling
 
-Opening a new DB connection is slow (TCP + auth + SSL). `database/sql` maintains a **pool** of pre-opened connections:
-
-```
-Request 1 → borrows connection → runs query → returns connection to pool
-Request 2 → borrows same connection (reused)
-```
-
+`database/sql` maintains pre-opened connections and reuses them:
 - `SetMaxOpenConns(25)` — max 25 simultaneous connections
-- `SetMaxIdleConns(10)` — keep 10 alive when idle, ready immediately
+- `SetMaxIdleConns(10)` — keep 10 warm when idle
 
-**`sql.Open()` does NOT connect.** It just validates the driver name. `db.Ping()` is what actually tests the connection.
+Opening a new DB connection = TCP handshake + auth + SSL. Pooling amortizes that cost.
 
 ---
 
 ## 8. UUIDs as Primary Keys
 
-**Why not auto-increment (1, 2, 3...)?**
-1. **Predictable** — attacker can try IDs 41, 42, 43
-2. **Distributed collision** — two nodes might both generate `42`
-3. **Sequential scraping** — can iterate your entire dataset
+**Why not integers (1, 2, 3...)?**
+1. Predictable — attacker tries ID 41, 42, 43
+2. Distributed collision — two nodes might both generate `42`
+3. Sequential scraping — can iterate your entire dataset
 
-**UUID:** 128-bit cryptographically random value. `gen_random_uuid()` from `pgcrypto` generates one for every new row automatically. Looks like: `550e8400-e29b-41d4-a716-446655440000`
+`gen_random_uuid()` from `pgcrypto` generates a 128-bit random value per row automatically.
 
 ---
 
@@ -165,54 +137,46 @@ Request 2 → borrows same connection (reused)
 user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE
 ```
 
-**Foreign key:** `objects.user_id` must be a valid `users.id`. Database enforces this — your code doesn't have to.
+**FK:** `objects.user_id` must be a valid `users.id`. DB enforces this — your code doesn't have to.
 
-**CASCADE:** Delete a user → automatically delete all their objects → automatically delete all chunks. One SQL statement, entire tree cleaned up safely.
+**CASCADE:** Delete user → auto-delete all their objects → auto-delete all their chunks. One SQL statement, entire tree cleaned up.
 
 ---
 
 ## 10. What is a DSN?
 
-DSN = **Data Source Name**. The connection string for a database driver.
-
+Data Source Name — the connection string:
 ```
 host=localhost port=5433 user=atlasstore password=atlaspassword dbname=atlasstore sslmode=disable
 ```
 
-Assembled once in `config.go` and stored as `cfg.DBDSN`. Everything else just uses `cfg.DBDSN`.
+Assembled once in `config.go`, stored as `cfg.DBDSN`, used everywhere else.
 
 ---
 
 ## 11. Error Wrapping in Go
 
-Go has no exceptions. Errors are values returned from functions.
-
 ```go
 return nil, fmt.Errorf("could not connect: %w", err)
 ```
 
-`%w` **wraps** the original error inside a new one with context. Creates a chain:
+`%w` wraps the original error with context. Creates a readable chain:
 ```
-"migrations failed: could not create driver: dial tcp: connection refused"
+"migrations failed: could not create driver: connection refused"
 ```
 
-`errors.Is()` can unwrap the chain to check for specific types:
-```go
-if errors.Is(err, migrate.ErrNoChange) { ... }
-```
+`errors.Is(err, migrate.ErrNoChange)` unwraps the chain to check for specific types.
 
 ---
 
 ## 12. Go Pointers — When and Why
 
 ```go
-cfg := Config{...}   // value — copies all fields when passed around
-&cfg                 // pointer — 8 bytes regardless of struct size
+func Load() (*Config, error)  // pointer return
 ```
 
-**Why `Load()` returns `*Config`:**
-1. **Efficiency** — one copy, many references
-2. **Nilability** — `return nil, err` is idiomatic for failure; can't return a "zero Config"
+1. **Efficiency** — one copy, multiple references regardless of struct size
+2. **Nilability** — `return nil, err` is idiomatic for failure
 3. **`*sql.DB` must be shared** — one pool across all goroutines, never copied
 
 ---
@@ -223,250 +187,291 @@ cfg := Config{...}   // value — copies all fields when passed around
 import _ "github.com/lib/pq"
 ```
 
-Imports for **side effects only** — runs the package's `init()` function:
-```go
-// inside lib/pq — you never see this
-func init() {
-    sql.Register("postgres", &Driver{})
-}
-```
-Now `sql.Open("postgres", dsn)` knows what "postgres" means. Same pattern for `source/file` in `migrate.go` — registers the `file://` migration source.
+Imports for side effects only — runs the package's `init()` which registers the driver with `database/sql`. Required before `sql.Open("postgres", ...)` works.
 
 ---
 
 ## 14. Password Hashing with bcrypt
 
-**Never store plaintext passwords.** If your database leaks, every password is exposed.
-
-**bcrypt** is a one-way hashing function designed specifically for passwords:
+**Never store plaintext passwords.**
 
 ```go
-// Store this in the database — not the original password
-hash, _ := bcrypt.GenerateFromPassword([]byte("secret123"), bcrypt.DefaultCost)
-
-// On login — compare without ever storing the original
-err := bcrypt.CompareHashAndPassword(hash, []byte("secret123"))
+hash, _ := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.DefaultCost)
+err := bcrypt.CompareHashAndPassword(hash, []byte("secret"))
 ```
 
-**Why bcrypt and not SHA-256?**
-- bcrypt is intentionally **slow** (cost factor) — makes brute-force attacks take years
-- bcrypt includes a **salt** automatically — same password hashes differently each time, preventing rainbow table attacks
+**Why bcrypt over SHA-256?**
+- bcrypt is intentionally **slow** (cost factor) — brute force takes years
+- bcrypt includes a **salt** — same password hashes differently each time, defeats rainbow tables
 - SHA-256 is fast and deterministic — terrible for passwords, great for data integrity
 
 ---
 
 ## 15. JWT — JSON Web Tokens
 
-**The problem:** HTTP is stateless. After login, how does the server know who you are on the next request?
+**Problem:** HTTP is stateless. After login, how does the server know who you are?
 
-**Session cookies** (old way): Server stores session in a database, looks it up every request. Doesn't scale.
+**JWT (stateless):** Server signs a token with a secret. Client stores it, sends it back with every request. Server validates the signature — no database lookup needed.
 
-**JWT** (stateless): Server signs a token with a secret. Client stores it and sends it back with every request. Server validates the signature — no database lookup needed.
+**Structure:** `HEADER.PAYLOAD.SIGNATURE` — all base64 encoded.
 
-**Structure:** Three base64 parts separated by dots:
-```
-eyJhbGciOiJIUzI1NiJ9   .   eyJzdWIiOiJ1c2VyMSJ9   .   SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
-      HEADER                       PAYLOAD                        SIGNATURE
-```
-
-**Payload claims used in AtlasStore:**
+**Claims used:**
 ```json
-{
-  "sub": "user-uuid",      ← subject (who this token is for)
-  "exp": 1783373248,       ← expiry timestamp (Unix)
-  "iat": 1783114048        ← issued-at timestamp
-}
+{"sub": "user-uuid", "exp": 1783373248, "iat": 1783114048}
 ```
 
-**Verification:** Server re-signs the header+payload with `JWT_SECRET` and compares to the signature. If they match, the token is authentic. If anyone tampers with the payload, the signature won't match.
-
-**Security:** The `JWT_SECRET` must stay secret. Anyone with it can forge tokens.
+**Verification:** Re-sign header+payload with `JWT_SECRET`, compare to signature. Tampering = signature mismatch = rejected.
 
 ---
 
 ## 16. HTTP Middleware Pattern
 
-**The problem:** You need to run the same code (auth check, logging, rate limiting) before many different handlers without copy-pasting it into each one.
-
-**Middleware** is a function that wraps another handler:
+Middleware wraps a handler — runs code before (and optionally after) the real handler:
 
 ```go
 func RequireAuth(secret string) func(http.Handler) http.Handler {
-    return func(next http.Handler) http.Handler {       // returns a new handler
+    return func(next http.Handler) http.Handler {
         return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-            // 1. Do your thing (validate token)
-            if !valid {
-                http.Error(w, "unauthorized", 401)
-                return  // ← stops here, next handler never runs
-            }
-            // 2. Call the real handler
+            // validate token
+            if invalid { http.Error(w, "401", 401); return }
+            // call real handler
             next.ServeHTTP(w, r)
         })
     }
 }
 ```
 
-**How it wraps in router.go:**
+Wired in router:
 ```go
-protected := auth.RequireAuth(cfg.JWTSecret)
 mux.Handle("POST /objects", protected(http.HandlerFunc(objectHandler.Upload)))
 ```
 
-Request hits `RequireAuth` → if token valid → hits `objectHandler.Upload`. The handler doesn't know or care about auth — separation of concerns.
+Request → `RequireAuth` → if valid → `Upload`. The handler knows nothing about auth.
 
 ---
 
-## 17. Go Context — Passing Data Through a Request
+## 17. Go Context
 
-**The problem:** The auth middleware validates a JWT and extracts `userID`. How does it pass that to the handler below it?
+**Problem:** Middleware extracts `userID` from JWT. How does it pass that to the handler?
 
-You can't use function parameters (middleware and handler have fixed HTTP signatures). You can't use global variables (concurrent requests would overwrite each other).
+Can't use function params (fixed HTTP signatures). Can't use globals (concurrent requests overwrite each other).
 
-**Solution: `context.Context`** — a request-scoped key-value store that travels with the request:
+**Solution:** `context.Context` — request-scoped key-value store:
 
 ```go
-// In middleware — inject value
+// middleware — write
 ctx := context.WithValue(r.Context(), UserIDKey, userID)
 next.ServeHTTP(w, r.WithContext(ctx))
 
-// In handler — read value
+// handler — read
 userID := r.Context().Value(auth.UserIDKey).(string)
 ```
 
-**Why a private `contextKey` type?**
-```go
-type contextKey string        // private type
-const UserIDKey contextKey = "userID"
-```
-If you used a plain `"userID"` string as the key, any package could overwrite it. The unexported type means only the `auth` package can read/write this specific key — no collisions.
+**Why a private `contextKey` type?** Prevents other packages from accidentally reading/overwriting the same key.
 
 ---
 
-## 18. Struct-Based Handlers (Dependency Injection)
+## 18. Struct-Based Handlers
 
-**The problem:** Handler functions need access to the database and JWT secret. How do you get them there without global variables?
+**Problem:** Handlers need `*sql.DB`, `JWTSecret`, etc. without globals.
 
-**Bad way — globals:**
 ```go
-var DB *sql.DB  // global — untestable, invisible dependencies
-```
-
-**Good way — struct-based handlers:**
-```go
-type Handler struct {
-    DB        *sql.DB
-    JWTSecret string
-}
-
-func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
-    // h.DB and h.JWTSecret available here
+type ObjectHandler struct {
+    DB            *sql.DB
+    StorageClient *StorageClient
+    ChunkSizeMB   int
 }
 ```
 
-`main.go` creates the handler with its dependencies explicitly:
-```go
-authHandler := &auth.Handler{
-    DB:        database,
-    JWTSecret: cfg.JWTSecret,
-}
-```
-
-Dependencies are visible, testable, and no global state. This pattern is called **dependency injection**.
+`main.go` creates the handler with explicit dependencies. This is **dependency injection** — dependencies are visible, testable, no hidden state.
 
 ---
 
 ## 19. Two-Server Architecture
 
-AtlasStore runs two separate HTTP servers. This is not accidental — it mirrors real distributed storage systems (S3, MinIO, GFS).
-
-### Gateway (Control Plane) — port 8000
-- Talks to clients and handles auth
-- Has access to the database (knows about users, files, metadata)
-- Orchestrates: decides which storage nodes get which chunks
-- Exposed to the internet in production
-
-### Storage Node (Data Plane) — port 9000
-- Only talks to the gateway (never to clients directly)
-- No database, no auth logic — just disk I/O
-- Each node is a dumb file server: POST chunk → save, GET chunk → serve
-- NOT exposed to the internet in production
+**Gateway (Control Plane):** auth, database, orchestration — exposed to clients
+**Storage Node (Data Plane):** disk I/O only — internal, not exposed to internet
 
 **Why separate?**
-1. **Scale independently** — need more disk space? Add storage nodes. High request volume? Scale the gateway. You can't do that if they're one binary.
-2. **Different hardware** — gateway: CPU/RAM, storage nodes: large disks
-3. **Fault isolation** — gateway crash ≠ data loss
-4. **Replication** — same chunk gets sent to 3 different storage nodes. Only possible if they're separate addressable servers.
+1. Scale independently — add disk (nodes) vs add CPU (gateway) separately
+2. Different hardware profiles
+3. Fault isolation — gateway crash ≠ data loss
+4. Enables replication — same chunk → multiple nodes (Phase 4)
 
 ---
 
-## 20. Why `io.Copy` Instead of `ReadAll`
+## 20. Why `io.Copy`
 
 ```go
-// BAD — loads entire chunk into RAM
+// BAD — 100 concurrent 5MB uploads = 500MB RAM
 data, _ := io.ReadAll(r.Body)
 os.WriteFile(path, data, 0644)
 
-// GOOD — streams from network to disk in 32KB increments
+// GOOD — fixed ~32KB buffer regardless of file size
 io.Copy(file, r.Body)
 ```
 
-A 5MB chunk is small. But if 100 requests arrive simultaneously, `ReadAll` means 500MB in RAM at once. `io.Copy` uses a fixed ~32KB internal buffer regardless of file size. This is what makes storage systems efficient — you never need to hold the whole file in memory.
+`io.Copy` streams bytes directly from source to destination using an internal buffer. The whole file is never in memory at once.
 
-Same principle on `GetChunk`:
+---
+
+## 21. SHA-256 — Content Hashing
+
 ```go
-io.Copy(w, file)  // streams file → response without loading it into RAM
+h := sha256.Sum256(data)
+hash := hex.EncodeToString(h[:])  // 64 hex characters
+```
+
+**Properties:**
+- **Deterministic** — same content always = same hash
+- **Fixed size** — 64 hex chars regardless of input size
+- **One-way** — can't reverse the hash to get the content
+- **Collision-resistant** — two different inputs will not produce the same hash
+
+**How AtlasStore uses it:**
+- The hash IS the filename of the chunk on disk
+- No lookup table needed: `GET /chunk/{hash}` → open file named `{hash}`
+- Phase 2 will re-hash on download and compare → integrity verification
+
+**Why SHA-256 here but bcrypt for passwords?**
+- SHA-256 is fast — good for data where you need performance
+- bcrypt is slow — good for passwords where you want brute-force resistance
+- Different tools for different problems
+
+---
+
+## 22. `io.ReadFull`
+
+```go
+n, err := io.ReadFull(r.Body, buf)
+```
+
+Reads **exactly** `len(buf)` bytes from the reader into `buf`.
+
+| Return value | Meaning |
+|---|---|
+| `n == len(buf), err == nil` | Full buffer read — more data may remain |
+| `n < len(buf), err == io.ErrUnexpectedEOF` | Hit EOF before filling buffer — this is the **last chunk** |
+| `n == 0, err == io.EOF` | Nothing read, stream ended |
+
+This is why the loop uses:
+```go
+if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+    break  // last chunk processed, exit loop
+}
+```
+
+The last chunk of a file is almost always smaller than `ChunkSizeMB` — `io.ReadFull` handles this gracefully.
+
+---
+
+## 23. Streaming HTTP Responses
+
+**Download doesn't load the whole file into RAM:**
+
+```go
+for _, chunk := range chunks {
+    data, _ := StorageClient.GetChunk(chunk.Hash)  // fetches one chunk
+    w.Write(data)                                   // writes it immediately
+}
+```
+
+Each chunk is fetched and written to the response one at a time. The client receives bytes while the gateway is still fetching later chunks. This is **streaming** — essential for large files.
+
+Without streaming:
+```go
+// BAD — load entire file into memory first
+allBytes := fetchAllChunks()  // 10GB in RAM
+w.Write(allBytes)             // then send
 ```
 
 ---
 
-## 21. Object Storage — What Problem It Solves
+## 24. Ownership Enforcement in SQL vs Code
 
-A regular filesystem (`/home/user/files/report.pdf`) doesn't scale:
-- One disk fills up
-- One machine goes down → files lost
-- Hard to replicate across regions
+Two ways to enforce "users can only access their own data":
 
-**Object storage** treats every file as a flat **object** with a unique key, data bytes, and metadata. No folder hierarchy at the storage level. Any node can store any object — trivially distributable.
-
-AtlasStore's model:
+**Option A — Check in code:**
+```go
+obj, _ := db.GetObjectByID(db, objectID)  // gets any object
+if obj.UserID != userID { return 403 }    // check after
 ```
-Object = objects table row + chunks table rows
+
+**Option B — Enforce in SQL (what AtlasStore does):**
+```sql
+SELECT * FROM objects WHERE id = $1 AND user_id = $2
+```
+
+**Why SQL is better:**
+- No data crosses the network if it doesn't belong to the user
+- Impossible to accidentally forget the check — it's structural
+- Single round trip instead of two
+
+**Why return 404 instead of 403:**
+- 403 tells the attacker the object EXISTS
+- 404 reveals nothing — standard practice for private resource APIs (S3 does this)
+
+---
+
+## 25. Best-Effort Operations
+
+```go
+// Delete from storage node — best effort, don't fail if node is down
+for _, chunk := range chunks {
+    _ = h.StorageClient.DeleteChunk(chunk.Hash)
+}
+w.WriteHeader(http.StatusNoContent)
+```
+
+The `_` ignores the error from `DeleteChunk`. Why?
+
+The source of truth is **PostgreSQL**. Once the DB row is deleted, the object is logically gone — users can't access it anymore. The chunk on disk becomes **orphaned** (unreachable). Whether or not the storage node successfully deletes the file is a secondary concern.
+
+This is a common distributed systems trade-off: **don't let a storage node failure prevent a logically valid delete**. In production you'd have a background garbage collector that cleans up orphaned chunks.
+
+---
+
+## 26. Object Storage
+
+A regular filesystem doesn't scale — one disk fills up, one machine goes down = data lost.
+
+Object storage treats every file as a flat **object** (key + bytes + metadata). No folder hierarchy at storage level. Any node can store any object — trivially distributable.
+
+AtlasStore:
+```
+Object = objects table row + N chunk files on disk
 Key    = objects.id (UUID)
-Data   = chunk files spread across storage nodes
+Data   = chunk files in data/node1/{hash}
 Meta   = name, size_bytes, content_type
 ```
 
 ---
 
-## 22. Chunking — Why Files Are Split
+## 27. Chunking
 
-**Without chunking:**
-- 10GB file on one node → that node fills up
-- Node goes down → file gone
-- Can't parallelize download
+**Without chunking:** 10GB file on one node → node fills up, no replication possible.
 
 **With chunking (5MB pieces):**
-```
-10GB file → 2048 chunks × 5MB
-```
+1. **Distribution** — chunks spread across nodes
+2. **Replication** — same chunk stored on N nodes (Phase 4)
+3. **Parallel I/O** — fetch chunk 0 and chunk 1 simultaneously (Phase 2)
+4. **Integrity** — SHA-256 hash each chunk, re-verify on download (Phase 2)
 
-1. **Distribution** — chunks spread across nodes, no single node holds the whole file
-2. **Replication** — each chunk stored on N nodes. One goes down → still have it
-3. **Parallel I/O** — fetch chunk 0 from node A and chunk 1 from node B simultaneously
-4. **Integrity** — SHA-256 hash each chunk. On download, re-hash and compare
-
-**Reassembly:** `chunks.chunk_index` determines the order. `ORDER BY chunk_index` → concatenate bytes → original file.
+**Reassembly:** `chunks.chunk_index` determines order. Always `ORDER BY chunk_index` → concatenate → original file.
 
 ---
 
 ## Concepts Still To Come
 
-| Concept | When | Why It Matters |
+| Concept | Phase | Why |
 |---|---|---|
-| **SHA-256 hashing** | Week 3 | Fingerprinting chunks for integrity + deduplication |
-| **Multipart file streaming** | Week 3 | Reading large uploads without loading into memory |
-| **Goroutines & channels** | Week 3 | Uploading chunks to 3 nodes in parallel |
-| **Consistent Hashing** | Phase 6 | Distributing chunks across nodes without a lookup table |
-| **Raft Consensus** | Phase 7 | How distributed nodes agree on state |
-| **gRPC** | Phase 5 | Binary protocol for internal node communication |
-| **Prometheus metrics** | Phase 11 | Measuring system health and performance |
+| **Integrity verification** | Phase 2 | Re-hash chunk on download, compare to stored hash |
+| **Parallel chunk I/O** | Phase 2 | Goroutines + channels for concurrent uploads/downloads |
+| **Health checks** | Phase 3 | Gateway polls `/health` on each node, skips dead ones |
+| **Node registration** | Phase 3 | Nodes announce themselves to gateway on startup |
+| **Replication** | Phase 4 | Write each chunk to N nodes, read from any |
+| **Consistent Hashing** | Phase 6 | Distribute chunks across nodes without a lookup table |
+| **Raft Consensus** | Phase 7 | How distributed nodes agree on cluster state |
+| **gRPC** | Phase 5 | Binary protocol replacing HTTP for internal comms |
+| **Encryption at rest** | Phase 8 | AES-256 chunks before writing to disk |
+| **Prometheus metrics** | Phase 11 | Measuring upload latency, node health, throughput |
