@@ -9,6 +9,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/farhan/atlasstore/internal/auth"
 	"github.com/farhan/atlasstore/internal/db"
@@ -40,28 +43,45 @@ func (h *ObjectHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	chunkSize := h.ChunkSizeMB * 1024 * 1024
-	buf := make([]byte, chunkSize)
+	///buf := make([]byte, chunkSize) not of any use because using go routines would rewrite as per each differet thread
 
 	type chunkMeta struct {
-		hash string
-		size int64
+		index int // index added cuz of multiple threadsss
+		hash  string
+		size  int64
 	}
 
 	var metas []chunkMeta
 	var totalSize int64
+	var mu sync.Mutex
+
+	g, _ := errgroup.WithContext(r.Context())
+	chunkIndex := 0
 
 	for {
+		buf := make([]byte, chunkSize)
 		n, err := io.ReadFull(r.Body, buf)
 
 		if n > 0 {
 			chunk := buf[:n]
-			hash := sha256hex(chunk)
-			if saveErr := h.StorageClient.SaveChunk(hash, chunk); saveErr != nil {
-				http.Error(w, "failed to store chunk", http.StatusInternalServerError)
-				return
-			}
-			metas = append(metas, chunkMeta{hash, int64(n)})
-			totalSize += int64(n)
+			idx := chunkIndex
+
+			g.Go(func() error {
+				hash := sha256hex(chunk)
+
+				if saveErr := h.StorageClient.SaveChunk(hash, chunk); saveErr != nil {
+					return saveErr
+				}
+				mu.Lock()
+				metas = append(metas, chunkMeta{index: idx, hash: hash, size: int64(n)})
+				totalSize += int64(n)
+				mu.Unlock()
+
+				return nil
+
+			})
+
+			chunkIndex++
 		}
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			break
@@ -72,14 +92,19 @@ func (h *ObjectHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if err := g.Wait(); err != nil {
+		http.Error(w, "failed to store chunk concurrently", http.StatusInternalServerError)
+		return
+	}
+
 	// ← loop done. now save metadata to DB once.
 	objectID, err := db.CreateObject(h.DB, userID, filename, contentType, totalSize)
 	if err != nil {
 		http.Error(w, "failed to save object metadata", http.StatusInternalServerError)
 		return
 	}
-	for i, m := range metas {
-		if err := db.CreateChunk(h.DB, objectID, i, m.hash, m.size, h.StorageClient.NodeAddress); err != nil {
+	for _, m := range metas {
+		if err := db.CreateChunk(h.DB, objectID, m.index, m.hash, m.size, h.StorageClient.NodeAddress); err != nil {
 			http.Error(w, "failed to save chunk metadata", http.StatusInternalServerError)
 			return
 		}
@@ -125,6 +150,15 @@ func (h *ObjectHandler) Download(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to retrieve chunk", http.StatusInternalServerError)
 			return
 		}
+
+		// Phase 2: Integrity check
+		// Verify that the data we got back exactly matches the hash we expected
+		if actualHash := sha256hex(data); actualHash != chunk.Hash {
+			// If this fails, the disk corrupted the file or the network was tampered with.
+			http.Error(w, "data corruption detected: chunk hash mismatch", http.StatusInternalServerError)
+			return
+		}
+
 		if _, err := w.Write(data); err != nil {
 			return
 		}
@@ -167,9 +201,20 @@ func (h *ObjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Delete from storage node — best effort, don't fail if node is down
+	//phase 2 word
+	var wg sync.WaitGroup
 	for _, chunk := range chunks {
-		_ = h.StorageClient.DeleteChunk(chunk.Hash)
+		wg.Add(1)
+
+		go func(hash string) {
+			defer wg.Done()
+			_ = h.StorageClient.DeleteChunk(hash)
+
+		}(chunk.Hash)
+
 	}
+
+	wg.Wait() // here i wait for all the deleting to finish or else it might not finish but header might be wrriten
 	w.WriteHeader(http.StatusNoContent)
 }
 

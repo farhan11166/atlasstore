@@ -16,9 +16,11 @@ AtlasStore is **not** a Dropbox clone. It is a distributed object storage system
 # Detailed Implementation Plan (Tickbox Approach)
 
 ## Phase 1 — MVP (Resume Ready)
-*Target: Weeks 1-4*
+
+_Target: Weeks 1-4_
 
 ### Week 1: Project Foundation & Metadata Layer ✅
+
 - [x] **1.1 Project Initialization & Infrastructure**
   - [x] Initialize Go module (`go mod init github.com/farhan/atlasstore`).
   - [x] Define standard Go project layout (`cmd/`, `internal/`, `pkg/`, `api/`).
@@ -30,6 +32,7 @@ AtlasStore is **not** a Dropbox clone. It is a distributed object storage system
   - [x] Implement DB connection layer (`internal/db/db.go`) + user repository (`internal/db/user_repo.go`).
 
 ### Week 2: Auth & Storage Nodes ✅
+
 - [x] **1.3 Authentication**
   - [x] Implement User Registration REST endpoint `POST /auth/register` (`internal/auth/handler.go`).
   - [x] Implement User Login REST endpoint with JWT generation `POST /auth/login` (`internal/auth/handler.go`).
@@ -42,6 +45,7 @@ AtlasStore is **not** a Dropbox clone. It is a distributed object storage system
   - [x] Implement `DELETE /chunk/{hash}` — removes chunk from disk.
 
 ### Week 3: API Gateway (Control Plane) ✅
+
 - [x] **1.5 API Gateway Logic**
   - [x] `POST /objects` — reads body, splits into chunks, SHA-256 hashes each, POSTs to storage node, saves metadata to DB (`internal/api/object_handler.go`).
   - [x] `GET /objects/{id}` — fetches chunk rows from DB, pulls bytes from storage node in order, streams reassembled file to client.
@@ -50,6 +54,7 @@ AtlasStore is **not** a Dropbox clone. It is a distributed object storage system
   - [x] JWT middleware wired — all object routes protected by `auth.RequireAuth`.
 
 ### Week 4: Dashboard & Wrap-Up ✅
+
 - [x] **1.6 Simple Web Dashboard**
   - [x] Create a vanilla HTML/JS/CSS frontend.
   - [x] Implement file upload UI with a progress indicator.
@@ -62,22 +67,26 @@ AtlasStore is **not** a Dropbox clone. It is a distributed object storage system
 ---
 
 ## Phase 2 — Storage Engine Enhancements (Week 5)
-- [ ] Implement Chunk Checksums (SHA-256) to verify data integrity upon download.
-- [ ] Implement parallel chunk uploading/downloading from/to storage nodes.
+
+- [x] Implement Chunk Checksums (SHA-256) to verify data integrity upon download.
+- [x] Implement parallel chunk uploading/downloading from/to storage nodes.
 - [ ] Enhance large file support (handling multipart uploads from the client).
 
 ## Phase 3 — Distributed Storage Core (Week 6)
+
 - [ ] Build a Storage Node Registration mechanism (nodes announce themselves on startup).
 - [ ] Implement Heartbeats (`/health` checks) from Gateway to Storage nodes.
-- [ ] Update chunk placement logic to only select *healthy* nodes.
+- [ ] Update chunk placement logic to only select _healthy_ nodes.
 
 ## Phase 4 — Replication (Weeks 7-8)
+
 - [ ] Update Gateway upload logic to write each chunk to N nodes (e.g., Replication Factor = 2).
 - [ ] Update DB schema to track multiple locations per chunk.
 - [ ] Update download logic to fallback to a secondary node if the primary is unreachable.
 - [ ] Create a background repair worker to detect under-replicated chunks.
 
 ## Phase 5+ — Advanced Distributed Systems (Weeks 9+)
+
 - [ ] **Phase 5**: Migration from REST to gRPC for internal node communication.
 - [ ] **Phase 6**: Consistent Hashing ring for dynamic node addition.
 - [ ] **Phase 7**: Consensus / Raft for Cluster state management.
