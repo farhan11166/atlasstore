@@ -34,6 +34,11 @@ func NewRouter(cfg *config.Config, database *sql.DB) http.Handler {
 	mux.Handle("GET /objects", protected(http.HandlerFunc(objectHandler.List)))
 	mux.Handle("GET /objects/{id}", protected(http.HandlerFunc(objectHandler.Download)))
 	mux.Handle("DELETE /objects/{id}", protected(http.HandlerFunc(objectHandler.Delete)))
+
+	mux.Handle("POST /multipart", protected(http.HandlerFunc(objectHandler.InitMultipart)))
+	mux.Handle("POST /multipart/{upload_id}/{part_number}", protected(http.HandlerFunc(objectHandler.UploadPart)))
+	mux.Handle("POST /multipart/{upload_id}/complete", protected(http.HandlerFunc(objectHandler.CompleteMultipart)))
+
 	return mux
 
 }

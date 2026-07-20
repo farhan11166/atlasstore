@@ -214,6 +214,20 @@ objectHandler.Upload()
 {"id":"uuid","name":"hello.txt","size_bytes":17}
 ```
 
+### Multipart Upload Flow (Phase 2)
+```text
+1. POST /multipart
+   └── db.CreateMultipartUpload() → returns upload_id
+
+2. POST /multipart/{id}/{part} (Repeated N times in parallel)
+   ├── StorageClient.SaveChunk()
+   └── db.CreateMultipartChunk() → saves to temp table
+
+3. POST /multipart/{id}/complete
+   └── db.CompleteMultipartUpload() 
+       └── SQL Transaction moves temp metadata to main tables
+```
+
 ### Download Flow
 ```
 curl GET /objects/{id} (Bearer token)
@@ -254,8 +268,6 @@ objectHandler.Delete()
 
 | Component | Location | Needed For |
 |---|---|---|
-| SHA-256 integrity check on download | object_handler | Phase 2 — re-hash chunk, compare |
-| Parallel chunk I/O | object_handler | Phase 2 — goroutines |
 | Health-check polling | gateway | Phase 3 — detect dead nodes |
 | Node registration | storagenode | Phase 3 — nodes announce themselves |
 | Replication (N copies per chunk) | gateway | Phase 4 |

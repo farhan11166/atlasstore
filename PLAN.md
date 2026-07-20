@@ -70,7 +70,7 @@ _Target: Weeks 1-4_
 
 - [x] Implement Chunk Checksums (SHA-256) to verify data integrity upon download.
 - [x] Implement parallel chunk uploading/downloading from/to storage nodes.
-- [ ] Enhance large file support (handling multipart uploads from the client).
+- [x] Enhance large file support (handling multipart uploads from the client).
 
 ## Phase 3 — Distributed Storage Core (Week 6)
 

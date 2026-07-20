@@ -222,3 +222,68 @@ func sha256hex(data []byte) string {
 	h := sha256.Sum256(data)
 	return hex.EncodeToString(h[:])
 }
+
+func (h *ObjectHandler) InitMultipart(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(auth.UserIDKey).(string)
+
+	var req struct {
+		Filename    string `json:"filename"`
+		ContentType string `json:"content_type"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	uploadID, err := db.CreateMultipartUpload(h.DB, userID, req.Filename, req.ContentType)
+
+	if err != nil {
+		fmt.Println("DB ERROR:", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	json.NewEncoder(w).Encode(map[string]string{"upload_id": uploadID})
+}
+func (h *ObjectHandler) UploadPart(w http.ResponseWriter, r *http.Request) {
+
+	uploadID := r.PathValue("upload_id")
+	partStr := r.PathValue("part_number")
+
+	var partNumber int
+	fmt.Sscanf(partStr, "%d", &partNumber)
+
+	chunkData, err := io.ReadAll(io.LimitReader(r.Body, int64(h.ChunkSizeMB*1024*1024+1024)))
+	if err != nil || len(chunkData) == 0 {
+		http.Error(w, "failed to read part", http.StatusBadRequest)
+		return
+	}
+
+	hash := sha256hex(chunkData)
+
+	if saveErr := h.StorageClient.SaveChunk(hash, chunkData); saveErr != nil {
+		http.Error(w, "failed to store chunk on storage node", http.StatusInternalServerError)
+		return
+	}
+
+	if err := db.CreateMultipartChunk(h.DB, uploadID, partNumber, hash, int64(len(chunkData)), h.StorageClient.NodeAddress); err != nil {
+		http.Error(w, "failed to save chunk metadata", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *ObjectHandler) CompleteMultipart(w http.ResponseWriter, r *http.Request) {
+	uploadID := r.PathValue("upload_id")
+	userID := r.Context().Value(auth.UserIDKey).(string)
+	objectID, err := db.CompleteMultipartUpload(h.DB, uploadID, userID)
+	if err != nil {
+		http.Error(w, "failed to complete upload", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"object_id": objectID})
+}

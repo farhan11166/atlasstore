@@ -521,8 +521,6 @@ URL.revokeObjectURL(url) // free memory
 
 | Concept | Phase | Why |
 |---|---|---|
-| **Integrity verification** | Phase 2 | Re-hash chunk on download, compare to stored hash |
-| **Parallel chunk I/O** | Phase 2 | Goroutines + channels for concurrent uploads/downloads |
 | **Health checks** | Phase 3 | Gateway polls `/health` on each node, skips dead ones |
 | **Node registration** | Phase 3 | Nodes announce themselves to gateway on startup |
 | **Replication** | Phase 4 | Write each chunk to N nodes, read from any |
@@ -531,3 +529,20 @@ URL.revokeObjectURL(url) // free memory
 | **gRPC** | Phase 5 | Binary protocol replacing HTTP for internal comms |
 | **Encryption at rest** | Phase 8 | AES-256 chunks before writing to disk |
 | **Prometheus metrics** | Phase 11 | Measuring upload latency, node health, throughput |
+
+---
+
+## 31. Data Integrity & Checksums (Phase 2)
+When downloading, we re-hash the data received from the storage node and compare it to the hash stored in the database. If they mismatch, it prevents silent data corruption (e.g., bit rot on the hard drive) or network tampering.
+
+## 32. Parallel I/O with Goroutines (Phase 2)
+Instead of waiting for one chunk to delete or upload before starting the next, we use `sync.WaitGroup` and `errgroup` to launch multiple background workers (`goroutines`).
+- `WaitGroup` handles fire-and-forget concurrency (e.g., deleting chunks where we ignore errors).
+- `errgroup` handles concurrency where we care if one of the background tasks fails (e.g., uploading chunks where a failure means the upload must abort).
+
+## 33. SQL Transactions (Phase 2)
+`CompleteMultipartUpload` requires moving data from temp tables to permanent tables, and then deleting the temp tables. If the server crashes in the middle, the database could be left in an inconsistent state.
+`tx, err := db.Begin()` starts a transaction. All queries use `tx`. If anything fails, `tx.Rollback()` safely undoes everything. Only `tx.Commit()` makes the changes permanent.
+
+## 34. Multipart Uploads (Phase 2)
+Uploading a 10GB file in a single HTTP request is fragile. If the connection drops at 99%, the user has to restart from 0%. Multipart Uploads solve this by slicing the file on the client side (`file.slice()`) and uploading the 5MB chunks independently in parallel. The backend stores metadata in temporary tables until the client sends a `complete` signal, which stitches them together.

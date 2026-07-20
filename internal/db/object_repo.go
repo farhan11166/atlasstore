@@ -129,3 +129,65 @@ func DeleteObject(db *sql.DB, objectID, userID string) error {
 	}
 	return nil
 }
+
+func CreateMultipartUpload(db *sql.DB, userID, filename, contentType string) (string, error) {
+	var id string
+	err := db.QueryRow(
+		`INSERT INTO multipart_uploads (user_id, filename, content_type) VALUES ($1, $2, $3) RETURNING id`,
+		userID, filename, contentType,
+	).Scan(&id)
+	return id, err
+}
+
+func CompleteMultipartUpload(db *sql.DB, uploadID, userID string) (string, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	// 1. Get the upload details
+	var filename, contentType string
+	err = tx.QueryRow(`SELECT filename, content_type FROM multipart_uploads WHERE id = $1 AND user_id = $2`, uploadID, userID).Scan(&filename, &contentType)
+	if err != nil {
+		return "", err
+	}
+
+	// 2. Sum the total size of all uploaded chunks
+	var totalSize int64
+	err = tx.QueryRow(`SELECT COALESCE(SUM(size_bytes), 0) FROM multipart_chunks WHERE upload_id = $1`, uploadID).Scan(&totalSize)
+	if err != nil {
+		return "", err
+	}
+
+	// 3. Create the final main object (THIS IS WHAT YOU MISSED!)
+	var newObjectID string
+	err = tx.QueryRow(`INSERT INTO objects (user_id, name, content_type, size_bytes) VALUES ($1, $2, $3, $4) RETURNING id`, userID, filename, contentType, totalSize).Scan(&newObjectID)
+	if err != nil {
+		return "", err
+	}
+
+	// 4. Move all chunks over to the main chunks table
+	_, err = tx.Exec(`INSERT INTO chunks (object_id, chunk_index, hash, size, node_address)
+		 SELECT $1, chunk_index, hash, size_bytes, node_address FROM multipart_chunks WHERE upload_id = $2`, newObjectID, uploadID)
+	if err != nil {
+		return "", err
+	}
+
+	// 5. Delete the temp upload
+	_, err = tx.Exec(`DELETE FROM multipart_uploads WHERE id = $1`, uploadID)
+	if err != nil {
+		return "", err
+	}
+
+	return newObjectID, tx.Commit()
+}
+
+func CreateMultipartChunk(db *sql.DB, uploadID string, chunkIndex int, hash string, size int64, nodeAddress string) error {
+	_, err := db.Exec(
+		`INSERT INTO multipart_chunks (upload_id, chunk_index, hash, size_bytes, node_address) 
+		 VALUES ($1, $2, $3, $4, $5)`,
+		uploadID, chunkIndex, hash, size, nodeAddress,
+	)
+	return err
+}
