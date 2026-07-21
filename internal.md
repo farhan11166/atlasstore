@@ -268,7 +268,5 @@ objectHandler.Delete()
 
 | Component | Location | Needed For |
 |---|---|---|
-| Health-check polling | gateway | Phase 3 — detect dead nodes |
-| Node registration | storagenode | Phase 3 — nodes announce themselves |
 | Replication (N copies per chunk) | gateway | Phase 4 |
 | gRPC | internal comms | Phase 5 |

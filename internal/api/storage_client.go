@@ -9,20 +9,20 @@ import (
 
 // for talking to node using hhtp
 type StorageClient struct {
-	NodeAddress string
+	///NodeAddress string not needed as
 
 	HTTPClient *http.Client // htpp client can be reused with connection pooling
 }
 
 func NewStorageClient(nodeAddress string) *StorageClient {
 	return &StorageClient{
-		NodeAddress: nodeAddress,
-		HTTPClient:  &http.Client{},
+		//NodeAddress: nodeAddress, not needed changing the code as eper the new nodes
+		HTTPClient: &http.Client{},
 	}
 }
 
-func (c *StorageClient) SaveChunk(hash string, data []byte) error {
-	req, err := http.NewRequest("POST", c.NodeAddress+"/chunk", bytes.NewReader(data))
+func (c *StorageClient) SaveChunk(nodeAddress string, hash string, data []byte) error {
+	req, err := http.NewRequest("POST", nodeAddress+"/chunk", bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
@@ -45,8 +45,8 @@ func (c *StorageClient) SaveChunk(hash string, data []byte) error {
 }
 
 // gets a chunk
-func (c *StorageClient) GetChunk(hash string) ([]byte, error) {
-	resp, err := c.HTTPClient.Get(c.NodeAddress + "/chunk/" + hash)
+func (c *StorageClient) GetChunk(nodeAddress string, hash string) ([]byte, error) {
+	resp, err := c.HTTPClient.Get(nodeAddress + "/chunk/" + hash)
 	if err != nil {
 		return nil, fmt.Errorf("get Chunk: %w", err)
 	}
@@ -62,8 +62,8 @@ func (c *StorageClient) GetChunk(hash string) ([]byte, error) {
 }
 
 // DeleteChunk tells the storage node to remove a chunk.
-func (c *StorageClient) DeleteChunk(hash string) error {
-	req, err := http.NewRequest("DELETE", c.NodeAddress+"/chunk/"+hash, nil)
+func (c *StorageClient) DeleteChunk(nodeAddress string, hash string) error {
+	req, err := http.NewRequest("DELETE", nodeAddress+"/chunk/"+hash, nil)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}

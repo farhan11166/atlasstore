@@ -23,6 +23,10 @@ func NewRouter(cfg *config.Config, database *sql.DB) http.Handler {
 		StorageClient: storageClient,
 		ChunkSizeMB:   cfg.ChunkSizeMB,
 	}
+	nodeHandler := &NodeHandler{
+		DB: database,
+	}
+
 	protected := auth.RequireAuth(cfg.JWTSecret)
 
 	mux.HandleFunc("POST /auth/register", authHandler.Register)
@@ -38,6 +42,8 @@ func NewRouter(cfg *config.Config, database *sql.DB) http.Handler {
 	mux.Handle("POST /multipart", protected(http.HandlerFunc(objectHandler.InitMultipart)))
 	mux.Handle("POST /multipart/{upload_id}/{part_number}", protected(http.HandlerFunc(objectHandler.UploadPart)))
 	mux.Handle("POST /multipart/{upload_id}/complete", protected(http.HandlerFunc(objectHandler.CompleteMultipart)))
+
+	mux.HandleFunc("POST /nodes/register", nodeHandler.Register)
 
 	return mux
 

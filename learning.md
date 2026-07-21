@@ -521,8 +521,6 @@ URL.revokeObjectURL(url) // free memory
 
 | Concept | Phase | Why |
 |---|---|---|
-| **Health checks** | Phase 3 | Gateway polls `/health` on each node, skips dead ones |
-| **Node registration** | Phase 3 | Nodes announce themselves to gateway on startup |
 | **Replication** | Phase 4 | Write each chunk to N nodes, read from any |
 | **Consistent Hashing** | Phase 6 | Distribute chunks across nodes without a lookup table |
 | **Raft Consensus** | Phase 7 | How distributed nodes agree on cluster state |
@@ -546,3 +544,15 @@ Instead of waiting for one chunk to delete or upload before starting the next, w
 
 ## 34. Multipart Uploads (Phase 2)
 Uploading a 10GB file in a single HTTP request is fragile. If the connection drops at 99%, the user has to restart from 0%. Multipart Uploads solve this by slicing the file on the client side (`file.slice()`) and uploading the 5MB chunks independently in parallel. The backend stores metadata in temporary tables until the client sends a `complete` signal, which stitches them together.
+
+## 35. Service Discovery (Phase 3)
+In distributed systems, hardcoding IP addresses is impossible because nodes spin up and die dynamically. We solve this with **Service Discovery**.
+When a Storage Node starts, it makes an HTTP POST to the Gateway saying "I am alive at this address". The Gateway saves it in a database table. This allows the system to scale infinitely without manually editing configuration files.
+
+## 36. Heartbeat Monitoring (Phase 3)
+Just because a node registered doesn't mean it's still alive. A server could lose power or crash.
+The Gateway runs a background Goroutine (an infinite loop with a `time.Sleep`) that sends a GET request to every node's `/health` endpoint. If a node times out or fails, the Gateway marks it as `is_active = FALSE` so it stops sending data to a dead node.
+
+## 37. Dynamic Routing & Load Balancing (Phase 3)
+Instead of using a hardcoded node, the Gateway runs `SELECT address FROM nodes WHERE is_active = TRUE ORDER BY RANDOM() LIMIT 1` for every chunk upload.
+This randomly distributes chunks across the entire cluster. If you have 5 nodes, the data spreads out evenly, multiplying your storage capacity and write speed by 5.

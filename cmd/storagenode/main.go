@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -8,6 +10,20 @@ import (
 	"github.com/farhan/atlasstore/internal/config"
 	"github.com/farhan/atlasstore/internal/storage"
 )
+
+func registerWithGateway(gatewayURL, nodeAddress string) {
+	reqBody, _ := json.Marshal(map[string]string{
+		"address": nodeAddress,
+	})
+
+	// We POST to the gateway telling it our address
+	resp, err := http.Post(gatewayURL+"/nodes/register", "application/json", bytes.NewBuffer(reqBody))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		log.Printf("Warning: Failed to register with gateway: %v", err)
+	} else {
+		log.Println("Successfully registered with Gateway!")
+	}
+}
 
 func main() {
 	cfg, err := config.Load()
@@ -28,6 +44,9 @@ func main() {
 	mux.HandleFunc("DELETE /chunk/{hash}", handler.DeleteChunk)
 	mux.HandleFunc("GET /health", handler.Health)
 	addr := ":" + cfg.StorageNodePort
+	gatewayURL := "http://localhost:8000"
+	nodeAddress := "http://localhost:" + cfg.StorageNodePort
+	registerWithGateway(gatewayURL, nodeAddress)
 	log.Printf("Storage node listening on %s | data dir: %s", addr, dataDir)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("storage node crashed: %v", err)

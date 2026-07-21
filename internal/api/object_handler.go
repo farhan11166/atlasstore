@@ -49,6 +49,7 @@ func (h *ObjectHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		index int // index added cuz of multiple threadsss
 		hash  string
 		size  int64
+		node  string
 	}
 
 	var metas []chunkMeta
@@ -69,11 +70,16 @@ func (h *ObjectHandler) Upload(w http.ResponseWriter, r *http.Request) {
 			g.Go(func() error {
 				hash := sha256hex(chunk)
 
-				if saveErr := h.StorageClient.SaveChunk(hash, chunk); saveErr != nil {
+				nodeAddress, err := GetHealthyNode(h.DB)
+				if err != nil {
+					return err
+				}
+
+				if saveErr := h.StorageClient.SaveChunk(nodeAddress, hash, chunk); saveErr != nil {
 					return saveErr
 				}
 				mu.Lock()
-				metas = append(metas, chunkMeta{index: idx, hash: hash, size: int64(n)})
+				metas = append(metas, chunkMeta{index: idx, hash: hash, size: int64(n), node: nodeAddress})
 				totalSize += int64(n)
 				mu.Unlock()
 
@@ -104,7 +110,7 @@ func (h *ObjectHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, m := range metas {
-		if err := db.CreateChunk(h.DB, objectID, m.index, m.hash, m.size, h.StorageClient.NodeAddress); err != nil {
+		if err := db.CreateChunk(h.DB, objectID, m.index, m.hash, m.size, m.node); err != nil {
 			http.Error(w, "failed to save chunk metadata", http.StatusInternalServerError)
 			return
 		}
@@ -145,7 +151,7 @@ func (h *ObjectHandler) Download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, obj.Name))
 
 	for _, chunk := range chunks {
-		data, err := h.StorageClient.GetChunk(chunk.Hash)
+		data, err := h.StorageClient.GetChunk(chunk.NodeAddress, chunk.Hash)
 		if err != nil {
 			http.Error(w, "failed to retrieve chunk", http.StatusInternalServerError)
 			return
@@ -206,11 +212,11 @@ func (h *ObjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	for _, chunk := range chunks {
 		wg.Add(1)
 
-		go func(hash string) {
+		go func(hash string, nodeAddr string) {
 			defer wg.Done()
-			_ = h.StorageClient.DeleteChunk(hash)
+			_ = h.StorageClient.DeleteChunk(nodeAddr, hash)
 
-		}(chunk.Hash)
+		}(chunk.Hash, chunk.NodeAddress)
 
 	}
 
@@ -264,12 +270,18 @@ func (h *ObjectHandler) UploadPart(w http.ResponseWriter, r *http.Request) {
 
 	hash := sha256hex(chunkData)
 
-	if saveErr := h.StorageClient.SaveChunk(hash, chunkData); saveErr != nil {
+	nodeAddress, err := GetHealthyNode(h.DB)
+	if err != nil {
+		http.Error(w, "no healthy storage node available", http.StatusServiceUnavailable)
+		return
+	}
+
+	if saveErr := h.StorageClient.SaveChunk(nodeAddress, hash, chunkData); saveErr != nil {
 		http.Error(w, "failed to store chunk on storage node", http.StatusInternalServerError)
 		return
 	}
 
-	if err := db.CreateMultipartChunk(h.DB, uploadID, partNumber, hash, int64(len(chunkData)), h.StorageClient.NodeAddress); err != nil {
+	if err := db.CreateMultipartChunk(h.DB, uploadID, partNumber, hash, int64(len(chunkData)), nodeAddress); err != nil {
 		http.Error(w, "failed to save chunk metadata", http.StatusInternalServerError)
 		return
 	}
@@ -286,4 +298,13 @@ func (h *ObjectHandler) CompleteMultipart(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"object_id": objectID})
+}
+func GetHealthyNode(db *sql.DB) (string, error) {
+	var address string
+	// ORDER BY RANDOM() LIMIT 1 gives us a random node to spread the load!
+	err := db.QueryRow(`SELECT address FROM nodes WHERE is_active = TRUE ORDER BY RANDOM() LIMIT 1`).Scan(&address)
+	if err != nil {
+		return "", fmt.Errorf("no healthy nodes available: %w", err)
+	}
+	return address, nil
 }

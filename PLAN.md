@@ -74,9 +74,9 @@ _Target: Weeks 1-4_
 
 ## Phase 3 — Distributed Storage Core (Week 6)
 
-- [ ] Build a Storage Node Registration mechanism (nodes announce themselves on startup).
-- [ ] Implement Heartbeats (`/health` checks) from Gateway to Storage nodes.
-- [ ] Update chunk placement logic to only select _healthy_ nodes.
+- [x] Build a Storage Node Registration mechanism (nodes announce themselves on startup).
+- [x] Implement Heartbeats (`/health` checks) from Gateway to Storage nodes.
+- [x] Update chunk placement logic to only select _healthy_ nodes.
 
 ## Phase 4 — Replication (Weeks 7-8)
 

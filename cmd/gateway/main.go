@@ -29,6 +29,7 @@ func main() {
 	log.Println("Migrations applied")
 	router := api.NewRouter(cfg, database)
 	addr := ":" + cfg.GatewayPort
+	api.StartHealthChecker(database)
 	log.Printf("Gateway listening on %s", addr)
 	if err := http.ListenAndServe(addr, router); err != nil {
 		log.Fatalf("server error: %v", err)
