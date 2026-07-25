@@ -19,9 +19,10 @@ func NewRouter(cfg *config.Config, database *sql.DB) http.Handler {
 	storageClient := NewStorageClient("http://localhost:" + cfg.StorageNodePort)
 
 	objectHandler := &ObjectHandler{
-		DB:            database,
-		StorageClient: storageClient,
-		ChunkSizeMB:   cfg.ChunkSizeMB,
+		DB:                database,
+		StorageClient:     storageClient,
+		ChunkSizeMB:       cfg.ChunkSizeMB,
+		ReplicationFactor: cfg.ReplicationFactor,
 	}
 	nodeHandler := &NodeHandler{
 		DB: database,

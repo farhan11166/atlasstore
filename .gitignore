@@ -7,3 +7,8 @@ bin/
 data/
 # Go build cache
 vendor/
+
+test_upload.go
+
+gateway
+

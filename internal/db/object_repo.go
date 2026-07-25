@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 type Object struct {
@@ -17,12 +19,12 @@ type Object struct {
 }
 
 type Chunk struct {
-	ID          string
-	ObjectID    string
-	ChunkIndex  int
-	Hash        string
-	SizeBytes   int64
-	NodeAddress string
+	ID            string
+	ObjectID      string
+	ChunkIndex    int
+	Hash          string
+	SizeBytes     int64
+	NodeAddresses []string
 }
 
 func CreateObject(db *sql.DB, userID, name, contentType string, sizeBytes int64) (string, error) {
@@ -37,15 +39,30 @@ func CreateObject(db *sql.DB, userID, name, contentType string, sizeBytes int64)
 	return id, nil
 }
 
-func CreateChunk(db *sql.DB, objectID string, chunkIndex int, hash string, sizeBytes int64, nodeAddress string) error {
+func CreateChunk(db *sql.DB, objectID string, chunkIndex int, hash string, sizeBytes int64, nodeAddresses []string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var chunkID string
 	query := `
-		INSERT INTO chunks (object_id, chunk_index, hash, size, node_address)
-		VALUES ($1, $2, $3, $4, $5)`
-	_, err := db.Exec(query, objectID, chunkIndex, hash, sizeBytes, nodeAddress)
+		INSERT INTO chunks (object_id, chunk_index, hash, size)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id`
+	err = tx.QueryRow(query, objectID, chunkIndex, hash, sizeBytes).Scan(&chunkID)
 	if err != nil {
 		return fmt.Errorf("create chunk: %w", err)
 	}
-	return nil
+
+	for _, node := range nodeAddresses {
+		_, err = tx.Exec(`INSERT INTO chunk_locations (chunk_id, node_address) VALUES ($1, $2)`, chunkID, node)
+		if err != nil {
+			return fmt.Errorf("create chunk location: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 // GetObjectByID fetches an object by ID, verifying it belongs to the given user.
@@ -70,26 +87,25 @@ func GetObjectByID(db *sql.DB, objectID, userID string) (*Object, error) {
 
 func GetChunksByObjectID(db *sql.DB, objectID string) ([]Chunk, error) {
 	query := `
-		SELECT id, object_id, chunk_index, hash, size, node_address
-		FROM chunks
-		WHERE object_id = $1
-		ORDER BY chunk_index ASC`
+		SELECT c.id, c.object_id, c.chunk_index, c.hash, c.size, array_agg(cl.node_address)
+		FROM chunks c
+		JOIN chunk_locations cl ON c.id = cl.chunk_id
+		WHERE c.object_id = $1
+		GROUP BY c.id
+		ORDER BY c.chunk_index ASC`
 	rows, err := db.Query(query, objectID)
 	if err != nil {
 		return nil, fmt.Errorf("get chunks: %w", err)
-
 	}
 	defer rows.Close()
 	var chunks []Chunk
-
 	for rows.Next() {
 		var c Chunk
-		if err := rows.Scan(&c.ID, &c.ObjectID, &c.ChunkIndex, &c.Hash, &c.SizeBytes, &c.NodeAddress); err != nil {
+		if err := rows.Scan(&c.ID, &c.ObjectID, &c.ChunkIndex, &c.Hash, &c.SizeBytes, pq.Array(&c.NodeAddresses)); err != nil {
 			return nil, fmt.Errorf("scan chunk %w", err)
 		}
-		chunks = append(chunks, c) //basic slice
+		chunks = append(chunks, c)
 	}
-
 	return chunks, nil
 }
 
@@ -168,8 +184,19 @@ func CompleteMultipartUpload(db *sql.DB, uploadID, userID string) (string, error
 	}
 
 	// 4. Move all chunks over to the main chunks table
-	_, err = tx.Exec(`INSERT INTO chunks (object_id, chunk_index, hash, size, node_address)
-		 SELECT $1, chunk_index, hash, size_bytes, node_address FROM multipart_chunks WHERE upload_id = $2`, newObjectID, uploadID)
+	query := `
+		WITH inserted_chunks AS (
+			INSERT INTO chunks (object_id, chunk_index, hash, size)
+			SELECT $1, chunk_index, hash, size_bytes FROM multipart_chunks WHERE upload_id = $2
+			RETURNING id, chunk_index
+		)
+		INSERT INTO chunk_locations (chunk_id, node_address)
+		SELECT ic.id, mcl.node_address
+		FROM inserted_chunks ic
+		JOIN multipart_chunk_locations mcl ON mcl.chunk_index = ic.chunk_index
+		WHERE mcl.upload_id = $2;
+	`
+	_, err = tx.Exec(query, newObjectID, uploadID)
 	if err != nil {
 		return "", err
 	}
@@ -183,11 +210,27 @@ func CompleteMultipartUpload(db *sql.DB, uploadID, userID string) (string, error
 	return newObjectID, tx.Commit()
 }
 
-func CreateMultipartChunk(db *sql.DB, uploadID string, chunkIndex int, hash string, size int64, nodeAddress string) error {
-	_, err := db.Exec(
-		`INSERT INTO multipart_chunks (upload_id, chunk_index, hash, size_bytes, node_address) 
-		 VALUES ($1, $2, $3, $4, $5)`,
-		uploadID, chunkIndex, hash, size, nodeAddress,
+func CreateMultipartChunk(db *sql.DB, uploadID string, chunkIndex int, hash string, size int64, nodeAddresses []string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(
+		`INSERT INTO multipart_chunks (upload_id, chunk_index, hash, size_bytes) VALUES ($1, $2, $3, $4)`,
+		uploadID, chunkIndex, hash, size,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+
+	for _, node := range nodeAddresses {
+		_, err = tx.Exec(`INSERT INTO multipart_chunk_locations (upload_id, chunk_index, node_address) VALUES ($1, $2, $3)`, uploadID, chunkIndex, node)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }

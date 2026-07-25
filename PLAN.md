@@ -80,10 +80,10 @@ _Target: Weeks 1-4_
 
 ## Phase 4 — Replication (Weeks 7-8)
 
-- [ ] Update Gateway upload logic to write each chunk to N nodes (e.g., Replication Factor = 2).
-- [ ] Update DB schema to track multiple locations per chunk.
-- [ ] Update download logic to fallback to a secondary node if the primary is unreachable.
-- [ ] Create a background repair worker to detect under-replicated chunks.
+- [x] Update Gateway upload logic to write each chunk to N nodes (e.g., Replication Factor = 2).
+- [x] Update DB schema to track multiple locations per chunk.
+- [x] Update download logic to fallback to a secondary node if the primary is unreachable.
+- [x] Create a background repair worker to detect under-replicated chunks.
 
 ## Phase 5+ — Advanced Distributed Systems (Weeks 9+)
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 )
 
 // for talking to node using hhtp
@@ -21,26 +22,51 @@ func NewStorageClient(nodeAddress string) *StorageClient {
 	}
 }
 
-func (c *StorageClient) SaveChunk(nodeAddress string, hash string, data []byte) error {
-	req, err := http.NewRequest("POST", nodeAddress+"/chunk", bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+func (c *StorageClient) SaveChunk(nodeAddresses []string, hash string, data []byte) []error {
+	var errs []error
+	var uploading sync.WaitGroup
+	var uploadMu sync.Mutex
+	for _, nodeAddress := range nodeAddresses {
+		uploading.Add(1)
+		go func(nodeAddress string) {
+			defer uploading.Done()
+			req, err := http.NewRequest("POST", nodeAddress+"/chunk", bytes.NewReader(data))
+			if err != nil {
+				err = fmt.Errorf("build request: %w for %s", err, nodeAddress)
+				uploadMu.Lock()
+				errs = append(errs, err)
+				uploadMu.Unlock()
+				return
+
+			}
+
+			req.Header.Set("X-Chunk-Hash", hash)
+
+			resp, err := c.HTTPClient.Do(req)
+			if err != nil {
+				err = fmt.Errorf("send chunk to %s:%w", nodeAddress, err)
+				uploadMu.Lock()
+				errs = append(errs, err)
+				uploadMu.Unlock()
+				return
+
+			}
+
+			resp.Body.Close()
+
+			if resp.StatusCode != http.StatusCreated {
+				err = fmt.Errorf("storage node returned %d", resp.StatusCode)
+				uploadMu.Lock()
+				errs = append(errs, err)
+				uploadMu.Unlock()
+				return
+
+			}
+
+		}(nodeAddress)
 	}
-
-	req.Header.Set("X-Chunk-Hash", hash)
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("send chunk %w", err)
-	}
-
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("storage node returned %d", resp.StatusCode)
-
-	}
-	return nil
+	uploading.Wait()
+	return errs // size of errs tells no.of failuresss .;)
 
 }
 
