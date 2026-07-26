@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -9,30 +10,36 @@ import (
 	"github.com/joho/godotenv"
 )
 
-type Config struct{
-	GatewayPort string
-    StorageNodePort string
-    DBHost string
-    DBPort string
-    DBUser string
-    DBPassword string
+type Config struct {
+	GatewayPort       string
+	StorageNodePort   string
+	DBHost            string
+	DBPort            string
+	DBUser            string
+	DBPassword        string
 	DBName            string
 	DBDSN             string // assembled connection string
 	JWTSecret         string
 	JWTExpiryHours    int
 	ChunkSizeMB       int
-	ReplicationFactor int					 		
+	ReplicationFactor int
+	EncryptionKey     []byte
 }
 
-func Load() (*Config,error){
+func Load() (*Config, error) {
 
-	err := godotenv.Load(); 
+	err := godotenv.Load()
 
-	if err != nil{
+	if err != nil {
 		log.Println("No .env file found, reading from enviroment.")
 	}
+	encKeyHex := getEnv("ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	enckey, err := hex.DecodeString(encKeyHex)
+	if err != nil || len(enckey) != 32 {
+		log.Fatalf("Invalid ENCRYPTION_KEY: must be a 64-character hex string (32 bytes). Err: %v", err)
+	}
 
-	cfg:= Config{
+	cfg := Config{
 
 		GatewayPort:     getEnv("GATEWAY_PORT", "8080"),
 		StorageNodePort: getEnv("STORAGE_NODE_PORT", "9000"),
@@ -42,6 +49,7 @@ func Load() (*Config,error){
 		DBPassword:      getEnv("DB_PASSWORD", ""),
 		DBName:          getEnv("DB_NAME", "atlasstore"),
 		JWTSecret:       getEnv("JWT_SECRET", ""),
+		EncryptionKey:   enckey,
 	}
 
 	if cfg.JWTSecret == "" {
@@ -51,8 +59,7 @@ func Load() (*Config,error){
 		return nil, fmt.Errorf("DB_PASSWORD must be set in environment")
 	}
 
-	
-	cfg.JWTExpiryHours,err=strconv.Atoi(getEnv("JWT_EXPIRY","72"))
+	cfg.JWTExpiryHours, err = strconv.Atoi(getEnv("JWT_EXPIRY", "72"))
 	if err != nil {
 		return nil, fmt.Errorf("invalid JWT_EXPIRY_HOURS: %w", err)
 	}

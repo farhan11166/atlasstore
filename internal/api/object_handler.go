@@ -14,6 +14,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/farhan/atlasstore/internal/auth"
+	"github.com/farhan/atlasstore/internal/crypto"
 	"github.com/farhan/atlasstore/internal/db"
 )
 
@@ -22,6 +23,7 @@ type ObjectHandler struct {
 	StorageClient     *StorageClient
 	ChunkSizeMB       int
 	ReplicationFactor int
+	EncryptionKey     []byte
 }
 
 type objectResponse struct {
@@ -71,12 +73,17 @@ func (h *ObjectHandler) Upload(w http.ResponseWriter, r *http.Request) {
 			g.Go(func() error {
 				hash := sha256hex(chunk)
 
+				encryptedChunk, err := crypto.Encrypt(chunk, h.EncryptionKey)
+				if err != nil {
+					return fmt.Errorf("failed to encrypt chunk: %w", err)
+				}
+
 				nodeAddresses, err := GetHealthyNodes(h.DB, h.ReplicationFactor)
 				if err != nil {
 					return err
 				}
 
-				if saveErrs := h.StorageClient.SaveChunk(nodeAddresses, hash, chunk); len(saveErrs) > 0 {
+				if saveErrs := h.StorageClient.SaveChunk(nodeAddresses, hash, encryptedChunk); len(saveErrs) > 0 {
 					fmt.Printf("SaveChunk errors in Upload: %v\n", saveErrs)
 					return fmt.Errorf("upload failed: %v", saveErrs)
 				}
@@ -164,11 +171,18 @@ func (h *ObjectHandler) Download(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			if actualHash := sha256hex(data); actualHash != chunk.Hash {
+			decryptedData, err := crypto.Decrypt(data, h.EncryptionKey)
+			if err != nil {
+				fmt.Printf("Warning: Failed to decrypt chunk %s: %v\n", chunk.Hash, err)
+				continue
+			}
+
+			if actualHash := sha256hex(decryptedData); actualHash != chunk.Hash {
 				fmt.Printf("Warning: Data corruption on node %s for chunk %s\n", nodeAddr, chunk.Hash)
 				continue
 			}
 			
+			data = decryptedData
 			success = true
 			break
 		}
@@ -282,13 +296,19 @@ func (h *ObjectHandler) UploadPart(w http.ResponseWriter, r *http.Request) {
 
 	hash := sha256hex(chunkData)
 
+	encryptedChunk, err := crypto.Encrypt(chunkData, h.EncryptionKey)
+	if err != nil {
+		http.Error(w, "failed to encrypt chunk", http.StatusInternalServerError)
+		return
+	}
+
 	nodeAddresses, err := GetHealthyNodes(h.DB, h.ReplicationFactor)
 	if err != nil {
 		http.Error(w, "no healthy storage node available", http.StatusServiceUnavailable)
 		return
 	}
 
-	if saveErrs := h.StorageClient.SaveChunk(nodeAddresses, hash, chunkData); len(saveErrs) > 0 {
+	if saveErrs := h.StorageClient.SaveChunk(nodeAddresses, hash, encryptedChunk); len(saveErrs) > 0 {
 		fmt.Printf("SaveChunk errors in UploadPart: %v\n", saveErrs)
 		http.Error(w, "failed to store chunk on storage node", http.StatusInternalServerError)
 		return

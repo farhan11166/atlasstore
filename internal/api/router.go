@@ -23,6 +23,7 @@ func NewRouter(cfg *config.Config, database *sql.DB) http.Handler {
 		StorageClient:     storageClient,
 		ChunkSizeMB:       cfg.ChunkSizeMB,
 		ReplicationFactor: cfg.ReplicationFactor,
+		EncryptionKey:     cfg.EncryptionKey,
 	}
 	nodeHandler := &NodeHandler{
 		DB: database,
