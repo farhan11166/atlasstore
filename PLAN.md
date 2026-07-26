@@ -90,5 +90,7 @@ _Target: Weeks 1-4_
 - [ ] **Phase 5**: Migration from REST to gRPC for internal node communication.
 - [ ] **Phase 6**: Consistent Hashing ring for dynamic node addition.
 - [ ] **Phase 7**: Consensus / Raft for Cluster state management.
-- [ ] **Phase 8-10**: Fault Tolerance, Production Features (Encryption, Compressions), Cloud Native (K8s).
+- [ ] **Phase 8-10**: Fault Tolerance, Production Features, Cloud Native (K8s).
+  - [x] Encryption At Rest (AES-GCM)
+  - [ ] Compression
 - [ ] **Phase 11-12**: Observability (Prometheus/Grafana) & Load Testing.

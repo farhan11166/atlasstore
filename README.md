@@ -1,7 +1,7 @@
 # AtlasStore
 
-🚧 Status: Active Development (Phase 4 Replication Complete) 🚧
-Currently building Phase 5 (gRPC migration) & Phase 8 (Encryption At Rest).
+🚧 Status: Active Development (Phase 8 Encryption Complete) 🚧
+Currently building Phase 5 (gRPC migration).
 
 > A distributed object storage platform built in Go.
 
@@ -13,7 +13,8 @@ AtlasStore is a learning-focused implementation of a distributed object storage 
 
 - **Two-Server Architecture:** Decoupled Gateway (Port 8000) and Storage Node (Port 9000).
 - **Chunking Engine:** Large files are streamed and split into 5MB chunks on upload.
-- **SHA-256 Integrity:** Chunks are content-hashed on upload and stored deterministically. (Note: Currently files are stored as raw bytes without at-rest encryption. Encryption is planned for Phase 8).
+- **Encryption At Rest:** Chunks are securely encrypted using AES-GCM before being stored on nodes.
+- **SHA-256 Integrity:** Chunks are content-hashed on upload and stored deterministically.
 - **Stateless Auth:** JWT-based registration and login system.
 - **PostgreSQL Metadata:** Tracks users, objects, chunk indices, and storage node placement.
 - **Streaming I/O:** Uploads and downloads are streamed through `io.Copy` to ensure memory safety, regardless of file size.
