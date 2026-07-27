@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
 	"os"
 
+	"google.golang.org/grpc"
+
 	"github.com/farhan/atlasstore/internal/config"
 	"github.com/farhan/atlasstore/internal/storage"
+	"github.com/farhan/atlasstore/pkg/pb"
 )
 
 func registerWithGateway(gatewayURL, nodeAddress string) {
@@ -37,18 +41,29 @@ func main() {
 	if dataDir == "" {
 		dataDir = "./data/chunks"
 	}
-	handler := &storage.NodeHandler{DataDir: dataDir}
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /chunk", handler.SaveChunk)
-	mux.HandleFunc("GET /chunk/{hash}", handler.GetChunk)
-	mux.HandleFunc("DELETE /chunk/{hash}", handler.DeleteChunk)
-	mux.HandleFunc("GET /health", handler.Health)
+
 	addr := ":" + cfg.StorageNodePort
-	gatewayURL := "http://localhost:8000"
-	nodeAddress := "http://localhost:" + cfg.StorageNodePort
-	registerWithGateway(gatewayURL, nodeAddress)
-	log.Printf("Storage node listening on %s | data dir: %s", addr, dataDir)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Fatalf("storage node crashed: %v", err)
+
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
 	}
+
+	grpcServer := grpc.NewServer()
+
+	handler := &storage.NodeHandler{DataDir: dataDir}
+	pb.RegisterStorageNodeServer(grpcServer, handler)
+
+	gatewayURL := "http://localhost:8000"
+	// not including http in the addr now
+	nodeAddress := "localhost:" + cfg.StorageNodePort
+	registerWithGateway(gatewayURL, nodeAddress)
+
+	log.Printf("Storage node (gRPC) listening on %s | data dir: %s", addr, dataDir)
+
+	// 4. Start serving gRPC!
+	if err := grpcServer.Serve(lis); err != nil {
+		log.Fatalf("gRPC server crashed: %v", err)
+	}
+
 }

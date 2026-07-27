@@ -87,10 +87,28 @@ _Target: Weeks 1-4_
 
 ## Phase 5+ — Advanced Distributed Systems (Weeks 9+)
 
-- [ ] **Phase 5**: Migration from REST to gRPC for internal node communication.
-- [ ] **Phase 6**: Consistent Hashing ring for dynamic node addition.
+### Phase 5: gRPC Migration (Completed) ✅
+- [x] Define Protocol Buffers (`storage.proto`) for inter-node communication.
+- [x] Generate Go code (`protoc`) for the gRPC Server and Client.
+- [x] Update Storage Node (`disk.go`) to implement `pb.StorageNodeServer` instead of HTTP handlers.
+- [x] Update Gateway (`storage_client.go`) to use `grpc.Dial` and `pb.NewStorageNodeClient`.
+- [x] Transition node servers to serve gRPC over raw TCP.
+
+### Phase 6: Consistent Hashing & Rebalancing (This Week's Goal) 🎯
+- [ ] **6.1 The Hash Ring Structure**
+  - [ ] Implement a Consistent Hashing Ring (e.g., mapping node hashes onto a `uint32` space).
+  - [ ] Implement Virtual Nodes (vNodes) to ensure even data distribution when a new node joins.
+- [ ] **6.2 Dynamic Gateway Routing**
+  - [ ] Update the Gateway to look up chunk placement using the Hash Ring instead of random assignment.
+  - [ ] Ensure `SaveChunk` targets the mathematically correct nodes based on the `sha256` hash of the chunk.
+- [ ] **6.3 Node Rebalancing Worker**
+  - [ ] Detect when a new storage node joins or leaves the cluster.
+  - [ ] Calculate which chunks need to be moved based on the updated Ring boundaries.
+  - [ ] Build a background worker that safely migrates existing chunks to their new homes without downtime.
+
+### Phase 7+: Future Horizons
 - [ ] **Phase 7**: Consensus / Raft for Cluster state management.
-- [ ] **Phase 8-10**: Fault Tolerance, Production Features, Cloud Native (K8s).
+- [ ] **Phase 8-10**: Fault Tolerance & Production Features
   - [x] Encryption At Rest (AES-GCM)
-  - [ ] Compression
+  - [ ] Data Compression
 - [ ] **Phase 11-12**: Observability (Prometheus/Grafana) & Load Testing.

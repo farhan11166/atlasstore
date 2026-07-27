@@ -65,9 +65,9 @@ CLIENT
 │  - Auth (JWT register/login)            │
 │  - Owns PostgreSQL (users/objects/chunks│
 │  - Chunks files, orchestrates storage   │
-│  - Talks to storage nodes via HTTP      │
+│  - Talks to storage nodes via gRPC      │
 └─────────────────────────────────────────┘
-  │  internal HTTP calls :9000
+  │  internal gRPC calls :9000
   ▼
 ┌─────────────────────────────────────────┐
 │  STORAGE NODE (cmd/storagenode/main.go) │  ← "Muscle" / Data Plane
@@ -179,17 +179,17 @@ HTTP client the gateway uses to call the storage node. Wraps `http.Client` (whic
 
 ### `internal/storage/disk.go`
 
-Handles chunk HTTP endpoints on the storage node. Files are stored as:
+Handles chunk gRPC endpoints on the storage node. Files are stored as:
 ```
 {DataDir}/{sha256-hash}   ← filename = hash, content = raw bytes
 ```
 
-| Method | Route | Operation |
+| Method | gRPC RPC | Operation |
 |---|---|---|
-| `SaveChunk` | `POST /chunk` | `os.Create` + `io.Copy(file, r.Body)` |
-| `GetChunk` | `GET /chunk/{hash}` | `os.Open` + `io.Copy(w, file)` |
-| `DeleteChunk` | `DELETE /chunk/{hash}` | `os.Remove` |
-| `Health` | `GET /health` | returns `{"status":"ok"}` |
+| `SaveChunk` | `SaveChunk(SaveChunkRequest)` | `os.Create` + `file.Write(req.Data)` |
+| `GetChunk` | `GetChunk(GetChunkRequest)` | `os.ReadFile` |
+| `DeleteChunk` | `DeleteChunk(DeleteChunkRequest)` | `os.Remove` |
+| `Health` | `Health(HealthRequest)` | returns `{"status":"ok"}` |
 
 ---
 
@@ -205,9 +205,9 @@ objectHandler.Upload()
   ├── io.ReadFull(body, 5MB) × N chunks
   │     sha256hex(chunk) → hash
   │     StorageClient.SaveChunk(hash, chunk)
-  │       → POST http://localhost:9000/chunk
+  │       → gRPC SaveChunk
   │       → disk.go: os.Create(./data/node1/{hash})
-  │                  io.Copy(file, body)
+  │                  file.Write(req.Data)
   ├── db.CreateObject → INSERT INTO objects
   └── db.CreateChunk × N → INSERT INTO chunks
   ↓
@@ -239,9 +239,8 @@ objectHandler.Download()
   ├── db.GetChunksByObjectID → ORDER BY chunk_index
   └── for chunk in chunks:
         StorageClient.GetChunk(chunk.Hash)
-          → GET http://localhost:9000/chunk/{hash}
-          → disk.go: os.Open(./data/node1/{hash})
-                     io.Copy(w, file)
+          → gRPC GetChunk
+          → disk.go: os.ReadFile(./data/node1/{hash})
         w.Write(bytes) → streams to client
   ↓
 "Hello AtlasStore!"
@@ -256,7 +255,7 @@ objectHandler.Delete()
   ├── db.DeleteObject(id, userID) → DELETE WHERE id=$1 AND user_id=$2
   │     CASCADE → chunks rows auto-deleted
   └── StorageClient.DeleteChunk × N (best effort)
-        → DELETE http://localhost:9000/chunk/{hash}
+        → gRPC DeleteChunk
         → disk.go: os.Remove(./data/node1/{hash})
   ↓
 204 No Content
@@ -269,4 +268,3 @@ objectHandler.Delete()
 | Component | Location | Needed For |
 |---|---|---|
 | Replication (N copies per chunk) | gateway | Phase 4 |
-| gRPC | internal comms | Phase 5 |

@@ -1,0 +1,43 @@
+syntax ="proto3";
+
+package pb;
+
+//where to place the filessss.
+
+option go_package = "github.com/farhan/atlasstore/pkg/pb";
+
+service StorageNode{
+    // 4 main internal api
+    rpc SaveChunk(SaveChunkRequest) returns(SaveChunkResponse);
+    rpc GetChunk (GetChunkRequest) returns (GetChunkResponse);
+    rpc DeleteChunk (DeleteChunkRequest) returns (DeleteChunkResponse);
+    rpc Health (HealthRequest) returns (HealthResponse);
+}
+
+// message definition
+
+message SaveChunkRequest{
+    string hash=1;
+    bytes data =2;
+}
+message SaveChunkResponse {
+    bool success = 1;
+}
+message GetChunkRequest {
+    string hash = 1;
+}
+message GetChunkResponse {
+    bytes data = 1; // The raw encrypted chunk data
+}
+message DeleteChunkRequest {
+    string hash = 1;
+}
+message DeleteChunkResponse {
+    bool success = 1;
+}
+
+message HealthRequest {}
+message HealthResponse {
+    string status = 1;
+    string data_dir = 2;
+}

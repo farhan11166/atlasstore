@@ -524,7 +524,6 @@ URL.revokeObjectURL(url) // free memory
 | **Replication** | Phase 4 | Write each chunk to N nodes, read from any |
 | **Consistent Hashing** | Phase 6 | Distribute chunks across nodes without a lookup table |
 | **Raft Consensus** | Phase 7 | How distributed nodes agree on cluster state |
-| **gRPC** | Phase 5 | Binary protocol replacing HTTP for internal comms |
 | **Encryption at rest** | Phase 8 | AES-256 chunks before writing to disk |
 | **Prometheus metrics** | Phase 11 | Measuring upload latency, node health, throughput |
 
