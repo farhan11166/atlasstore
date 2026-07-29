@@ -16,11 +16,18 @@ func NewRouter(cfg *config.Config, database *sql.DB) http.Handler {
 		JWTSecret: cfg.JWTSecret,
 		JWTExpiry: cfg.JWTExpiryHours,
 	}
-	storageClient := NewStorageClient("http://localhost:" + cfg.StorageNodePort)
+	storageClient := NewStorageClient() // making a new empty client
+
+	ringManager := NewRingManager(database, 50)
+	ringManager.SyncLoop()
+
+	StartHealthChecker(database, storageClient)
+	StartRebalancer(ringManager, storageClient, cfg.ReplicationFactor)
 
 	objectHandler := &ObjectHandler{
 		DB:                database,
 		StorageClient:     storageClient,
+		RingManager:       ringManager,
 		ChunkSizeMB:       cfg.ChunkSizeMB,
 		ReplicationFactor: cfg.ReplicationFactor,
 		EncryptionKey:     cfg.EncryptionKey,

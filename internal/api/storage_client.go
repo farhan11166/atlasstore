@@ -1,102 +1,124 @@
 package api
 
 import (
-	"bytes"
+	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"sync"
+	"time"
+
+	"github.com/farhan/atlasstore/pkg/pb"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
-// for talking to node using hhtp
 type StorageClient struct {
-	///NodeAddress string not needed as
-
-	HTTPClient *http.Client // htpp client can be reused with connection pooling
+	conns   map[string]*grpc.ClientConn
+	connsMu sync.RWMutex
 }
 
-func NewStorageClient(nodeAddress string) *StorageClient {
+func NewStorageClient() *StorageClient {
 	return &StorageClient{
-		//NodeAddress: nodeAddress, not needed changing the code as eper the new nodes
-		HTTPClient: &http.Client{},
+		conns: make(map[string]*grpc.ClientConn),
 	}
+}
+
+// getClient retrieves a cached connection or dials a new one
+func (c *StorageClient) getClient(address string) (pb.StorageNodeClient, error) {
+	c.connsMu.RLock()
+	conn, ok := c.conns[address]
+	c.connsMu.RUnlock()
+
+	if ok {
+		return pb.NewStorageNodeClient(conn), nil
+	}
+
+	c.connsMu.Lock()
+	defer c.connsMu.Unlock()
+
+	if conn, ok := c.conns[address]; ok {
+		return pb.NewStorageNodeClient(conn), nil
+	}
+
+	// Connect via gRPC
+	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, err
+	}
+	c.conns[address] = conn
+	return pb.NewStorageNodeClient(conn), nil
 }
 
 func (c *StorageClient) SaveChunk(nodeAddresses []string, hash string, data []byte) []error {
 	var errs []error
-	var uploading sync.WaitGroup
-	var uploadMu sync.Mutex
-	for _, nodeAddress := range nodeAddresses {
-		uploading.Add(1)
-		go func(nodeAddress string) {
-			defer uploading.Done()
-			req, err := http.NewRequest("POST", nodeAddress+"/chunk", bytes.NewReader(data))
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	for _, addr := range nodeAddresses {
+		wg.Add(1)
+		go func(address string) {
+			defer wg.Done()
+			client, err := c.getClient(address)
 			if err != nil {
-				err = fmt.Errorf("build request: %w for %s", err, nodeAddress)
-				uploadMu.Lock()
-				errs = append(errs, err)
-				uploadMu.Unlock()
+				mu.Lock()
+				errs = append(errs, fmt.Errorf("dial %s: %w", address, err))
+				mu.Unlock()
 				return
-
 			}
 
-			req.Header.Set("X-Chunk-Hash", hash)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
 
-			resp, err := c.HTTPClient.Do(req)
+			_, err = client.SaveChunk(ctx, &pb.SaveChunkRequest{Hash: hash, Data: data})
 			if err != nil {
-				err = fmt.Errorf("send chunk to %s:%w", nodeAddress, err)
-				uploadMu.Lock()
-				errs = append(errs, err)
-				uploadMu.Unlock()
-				return
-
+				mu.Lock()
+				errs = append(errs, fmt.Errorf("save chunk to %s: %w", address, err))
+				mu.Unlock()
 			}
-
-			resp.Body.Close()
-
-			if resp.StatusCode != http.StatusCreated {
-				err = fmt.Errorf("storage node returned %d", resp.StatusCode)
-				uploadMu.Lock()
-				errs = append(errs, err)
-				uploadMu.Unlock()
-				return
-
-			}
-
-		}(nodeAddress)
+		}(addr)
 	}
-	uploading.Wait()
-	return errs // size of errs tells no.of failuresss .;)
-
+	wg.Wait()
+	return errs
 }
 
-// gets a chunk
 func (c *StorageClient) GetChunk(nodeAddress string, hash string) ([]byte, error) {
-	resp, err := c.HTTPClient.Get(nodeAddress + "/chunk/" + hash)
+	client, err := c.getClient(nodeAddress)
 	if err != nil {
-		return nil, fmt.Errorf("get Chunk: %w", err)
+		return nil, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("storage node returned %d", resp.StatusCode)
-	}
-	data, err := io.ReadAll(resp.Body)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.GetChunk(ctx, &pb.GetChunkRequest{Hash: hash})
 	if err != nil {
-		return nil, fmt.Errorf("read chunk body: %w", err)
+		return nil, err
 	}
-	return data, nil
+	return resp.Data, nil
 }
 
-// DeleteChunk tells the storage node to remove a chunk.
 func (c *StorageClient) DeleteChunk(nodeAddress string, hash string) error {
-	req, err := http.NewRequest("DELETE", nodeAddress+"/chunk/"+hash, nil)
+	client, err := c.getClient(nodeAddress)
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		return err
 	}
-	resp, err := c.HTTPClient.Do(req)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err = client.DeleteChunk(ctx, &pb.DeleteChunkRequest{Hash: hash})
+	return err
+}
+
+// Health is a helper to check if a node is alive via gRPC
+func (c *StorageClient) Health(nodeAddress string) bool {
+	client, err := c.getClient(nodeAddress)
 	if err != nil {
-		return fmt.Errorf("delete chunk: %w", err)
+		return false
 	}
-	defer resp.Body.Close()
-	return nil
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err = client.Health(ctx, &pb.HealthRequest{})
+	return err == nil
 }

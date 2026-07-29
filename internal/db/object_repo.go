@@ -234,3 +234,42 @@ func CreateMultipartChunk(db *sql.DB, uploadID string, chunkIndex int, hash stri
 
 	return tx.Commit()
 }
+
+func GetAllChunks(db *sql.DB) ([]Chunk, error) {
+	query := `
+		SELECT c.id, c.object_id, c.chunk_index, c.hash, c.size, array_agg(cl.node_address)
+		FROM chunks c
+		JOIN chunk_locations cl ON c.id = cl.chunk_id
+		GROUP BY c.id
+	`
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("get all chunks: %w", err)
+	}
+	defer rows.Close()
+
+	var chunks []Chunk
+	for rows.Next() {
+		var c Chunk
+		if err := rows.Scan(&c.ID, &c.ObjectID, &c.ChunkIndex, &c.Hash, &c.SizeBytes, pq.Array(&c.NodeAddresses)); err != nil {
+			return nil, fmt.Errorf("scan chunk: %w", err)
+
+		}
+		chunks = append(chunks, c)
+	}
+	return chunks, nil
+}
+
+func AddChunkLocation(db *sql.DB, chunkID string, nodeAddress string) error {
+	_, err := db.Exec(`
+		INSERT INTO chunk_locations (chunk_id, node_address) 
+		VALUES ($1, $2) 
+		ON CONFLICT DO NOTHING
+	`, chunkID, nodeAddress)
+	return err
+}
+
+func RemoveChunkLocation(db *sql.DB, chunkID string, nodeAddress string) error {
+	_, err := db.Exec(`DELETE FROM chunk_locations WHERE chunk_id = $1 AND node_address = $2`, chunkID, nodeAddress)
+	return err
+}

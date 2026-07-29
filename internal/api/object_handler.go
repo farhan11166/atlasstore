@@ -21,6 +21,7 @@ import (
 type ObjectHandler struct {
 	DB                *sql.DB
 	StorageClient     *StorageClient
+	RingManager       *RingManager
 	ChunkSizeMB       int
 	ReplicationFactor int
 	EncryptionKey     []byte
@@ -78,9 +79,9 @@ func (h *ObjectHandler) Upload(w http.ResponseWriter, r *http.Request) {
 					return fmt.Errorf("failed to encrypt chunk: %w", err)
 				}
 
-				nodeAddresses, err := GetHealthyNodes(h.DB, h.ReplicationFactor)
-				if err != nil {
-					return err
+				nodeAddresses := h.RingManager.Ring.GetNodes(hash, h.ReplicationFactor)
+				if len(nodeAddresses) == 0 {
+					return fmt.Errorf("no healthy storage node available")
 				}
 
 				if saveErrs := h.StorageClient.SaveChunk(nodeAddresses, hash, encryptedChunk); len(saveErrs) > 0 {
@@ -302,8 +303,8 @@ func (h *ObjectHandler) UploadPart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nodeAddresses, err := GetHealthyNodes(h.DB, h.ReplicationFactor)
-	if err != nil {
+	nodeAddresses := h.RingManager.Ring.GetNodes(hash, h.ReplicationFactor)
+	if len(nodeAddresses) == 0 {
 		http.Error(w, "no healthy storage node available", http.StatusServiceUnavailable)
 		return
 	}
@@ -331,23 +332,4 @@ func (h *ObjectHandler) CompleteMultipart(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"object_id": objectID})
-}
-func GetHealthyNodes(db *sql.DB, count int) ([]string, error) {
-	rows, err := db.Query(`SELECT address FROM nodes WHERE is_active = TRUE ORDER BY RANDOM() LIMIT $1`, count)
-	if err != nil {
-		return nil, fmt.Errorf("no healthy nodes available: %w", err)
-	}
-	defer rows.Close()
-	var nodes []string
-	for rows.Next() {
-		var addr string
-		if err := rows.Scan(&addr); err != nil {
-			return nil, err
-		}
-		nodes = append(nodes, addr)
-	}
-	if len(nodes) == 0 {
-		return nil, fmt.Errorf("no healthy nodes available")
-	}
-	return nodes, nil
 }
