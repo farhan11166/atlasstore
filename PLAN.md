@@ -8,14 +8,14 @@
 
 AtlasStore is **not** a Dropbox clone. It is a distributed object storage system inspired by Amazon S3, MinIO, and GFS. The focus is on learning how distributed storage systems work internally.
 
-**Core Features**: Object storage, Chunk-based file storage, Distributed storage nodes, Replication, Fault tolerance.
-**Tech Stack**: Go, PostgreSQL, Redis, REST/gRPC, Docker, Prometheus.
+**Core Features**: Object storage, Chunk-based file storage, Distributed storage nodes, Replication, Fault tolerance.  
+**Tech Stack**: Go, PostgreSQL, REST/gRPC, Docker, Prometheus.
 
 ---
 
 # Detailed Implementation Plan (Tickbox Approach)
 
-## Phase 1 — MVP (Resume Ready)
+## Phase 1 — MVP (Resume Ready) ✅
 
 _Target: Weeks 1-4_
 
@@ -36,18 +36,18 @@ _Target: Weeks 1-4_
 - [x] **1.3 Authentication**
   - [x] Implement User Registration REST endpoint `POST /auth/register` (`internal/auth/handler.go`).
   - [x] Implement User Login REST endpoint with JWT generation `POST /auth/login` (`internal/auth/handler.go`).
-  - [x] Create JWT validation middleware (`internal/auth/middleware.go`) — wired in Week 3 when object routes are added.
+  - [x] Create JWT validation middleware (`internal/auth/middleware.go`).
 - [x] **1.4 Storage Nodes (Data Plane)**
   - [x] Implement local disk storage logic (`internal/storage/disk.go`).
-  - [x] Create HTTP server for storage node (`cmd/storagenode/main.go`).
-  - [x] Implement `POST /chunk` — saves chunk to disk.
-  - [x] Implement `GET /chunk/{hash}` — streams chunk from disk.
-  - [x] Implement `DELETE /chunk/{hash}` — removes chunk from disk.
+  - [x] Create gRPC server for storage node (`cmd/storagenode/main.go`).
+  - [x] Implement `SaveChunk` — saves chunk to disk.
+  - [x] Implement `GetChunk` — streams chunk from disk.
+  - [x] Implement `DeleteChunk` — removes chunk from disk.
 
 ### Week 3: API Gateway (Control Plane) ✅
 
 - [x] **1.5 API Gateway Logic**
-  - [x] `POST /objects` — reads body, splits into chunks, SHA-256 hashes each, POSTs to storage node, saves metadata to DB (`internal/api/object_handler.go`).
+  - [x] `POST /objects` — reads body, splits into chunks, SHA-256 hashes each, POSTs to storage node, saves metadata to DB.
   - [x] `GET /objects/{id}` — fetches chunk rows from DB, pulls bytes from storage node in order, streams reassembled file to client.
   - [x] `DELETE /objects/{id}` — deletes DB row (cascades to chunks), signals storage node to remove chunk files.
   - [x] `GET /objects` — lists all objects owned by the authenticated user.
@@ -62,53 +62,74 @@ _Target: Weeks 1-4_
 - [x] **1.7 MVP Finalization**
   - [x] Write a comprehensive `README.md` with setup/run instructions.
   - [x] Create a system architecture diagram (in README/internal).
-  - [x] Record a demo video for resume/portfolio.
 
 ---
 
-## Phase 2 — Storage Engine Enhancements (Week 5)
+## Phase 2 — Storage Engine Enhancements ✅
 
 - [x] Implement Chunk Checksums (SHA-256) to verify data integrity upon download.
 - [x] Implement parallel chunk uploading/downloading from/to storage nodes.
-- [x] Enhance large file support (handling multipart uploads from the client).
+- [x] Enhance large file support (multipart uploads from the client via `/multipart` endpoints).
 
-## Phase 3 — Distributed Storage Core (Week 6)
+## Phase 3 — Distributed Storage Core ✅
 
-- [x] Build a Storage Node Registration mechanism (nodes announce themselves on startup).
-- [x] Implement Heartbeats (`/health` checks) from Gateway to Storage nodes.
+- [x] Build a Storage Node Registration mechanism (nodes announce themselves on startup via `POST /nodes/register`).
+- [x] Implement Heartbeats — background health checker pings nodes via gRPC every 10s, updates `is_active` in PostgreSQL.
 - [x] Update chunk placement logic to only select _healthy_ nodes.
 
-## Phase 4 — Replication (Weeks 7-8)
+## Phase 4 — Replication ✅
 
-- [x] Update Gateway upload logic to write each chunk to N nodes (e.g., Replication Factor = 2).
-- [x] Update DB schema to track multiple locations per chunk.
+- [x] Update Gateway upload logic to write each chunk to N nodes (configurable `REPLICATION_FACTOR`).
+- [x] Update DB schema to track multiple locations per chunk (`chunk_locations` table).
 - [x] Update download logic to fallback to a secondary node if the primary is unreachable.
-- [x] Create a background repair worker to detect under-replicated chunks.
+- [x] Background repair worker to detect and fix under-replicated chunks.
 
-## Phase 5+ — Advanced Distributed Systems (Weeks 9+)
+---
 
-### Phase 5: gRPC Migration (Completed) ✅
-- [x] Define Protocol Buffers (`storage.proto`) for inter-node communication.
+## Phase 5 — gRPC Migration ✅
+
+- [x] Define Protocol Buffers (`pkg/pb/storage.proto`) for inter-node communication.
 - [x] Generate Go code (`protoc`) for the gRPC Server and Client.
-- [x] Update Storage Node (`disk.go`) to implement `pb.StorageNodeServer` instead of HTTP handlers.
-- [x] Update Gateway (`storage_client.go`) to use `grpc.Dial` and `pb.NewStorageNodeClient`.
-- [x] Transition node servers to serve gRPC over raw TCP.
+- [x] Update Storage Node (`internal/storage/disk.go`) to implement `pb.StorageNodeServer` instead of HTTP handlers.
+- [x] Update Gateway (`internal/api/storage_client.go`) to use `grpc.Dial` with connection caching and `pb.NewStorageNodeClient`.
+- [x] Transition Storage Node servers to serve gRPC over raw TCP.
+- [x] Migrate Health Checker from HTTP polling to gRPC `Health()` RPC.
 
-### Phase 6: Consistent Hashing & Rebalancing (This Week's Goal) 🎯
-- [ ] **6.1 The Hash Ring Structure**
-  - [ ] Implement a Consistent Hashing Ring (e.g., mapping node hashes onto a `uint32` space).
-  - [ ] Implement Virtual Nodes (vNodes) to ensure even data distribution when a new node joins.
-- [ ] **6.2 Dynamic Gateway Routing**
-  - [ ] Update the Gateway to look up chunk placement using the Hash Ring instead of random assignment.
-  - [ ] Ensure `SaveChunk` targets the mathematically correct nodes based on the `sha256` hash of the chunk.
-- [ ] **6.3 Node Rebalancing Worker**
-  - [ ] Detect when a new storage node joins or leaves the cluster.
-  - [ ] Calculate which chunks need to be moved based on the updated Ring boundaries.
-  - [ ] Build a background worker that safely migrates existing chunks to their new homes without downtime.
+---
 
-### Phase 7+: Future Horizons
-- [ ] **Phase 7**: Consensus / Raft for Cluster state management.
-- [ ] **Phase 8-10**: Fault Tolerance & Production Features
-  - [x] Encryption At Rest (AES-GCM)
-  - [ ] Data Compression
-- [ ] **Phase 11-12**: Observability (Prometheus/Grafana) & Load Testing.
+## Phase 6 — Consistent Hashing & Rebalancing ✅ ← This Week
+
+- [x] **6.1 The Hash Ring Structure**
+  - [x] Implement `HashRing` in `pkg/ring/ring.go` — maps node addresses onto a `uint32` hash space using SHA-256.
+  - [x] Implement Virtual Nodes (50 vNodes per physical node) for even data distribution.
+  - [x] Thread-safe `AddNode`, `RemoveNode`, `GetNodes`, `IsEmpty` methods using `sync.RWMutex`.
+- [x] **6.2 Dynamic Gateway Routing**
+  - [x] Create `RingManager` (`internal/api/ring_manager.go`) — a background goroutine that polls PostgreSQL every 10s and rebuilds the ring from active nodes.
+  - [x] Update Gateway upload/download to use `RingManager.Ring.GetNodes(chunkHash, replicationFactor)` for deterministic placement.
+  - [x] Multiple Gateway instances stay in sync via PostgreSQL (no distributed state needed yet).
+- [x] **6.3 Node Rebalancing Worker**
+  - [x] `StartRebalancer` in `internal/api/rebalancer.go` — runs every 60s.
+  - [x] Fetches all chunks from PostgreSQL, compares current node placement vs. expected ring placement.
+  - [x] If a chunk is misplaced: downloads it from its current node, uploads to the expected node via gRPC, updates PostgreSQL, and deletes from the old node.
+
+---
+
+## Phase 7+ — Future Horizons
+
+### Phase 7: Consensus / Raft for Cluster State Management
+- [ ] Allow Storage Nodes to form their own cluster and elect a leader.
+- [ ] Nodes agree on cluster membership without relying on PostgreSQL as the single source of truth.
+- [ ] Implement `etcd`-style distributed key-value store for cluster configuration.
+- [ ] If PostgreSQL goes down, the cluster continues to function.
+
+### Phase 8-10: Fault Tolerance & Production Features
+- [x] Encryption At Rest (AES-GCM 256-bit) — chunks encrypted before hitting the wire.
+- [ ] Data Compression (snappy or zstd) before encryption.
+- [ ] Circuit Breaker pattern for node communication.
+- [ ] Graceful degradation when quorum is lost.
+
+### Phase 11-12: Observability & Load Testing
+- [ ] Prometheus metrics endpoint on Gateway (request rates, rebalancing operations, node counts).
+- [ ] Grafana dashboard for cluster health visualization.
+- [ ] `k6` or `vegeta` load testing suite.
+- [ ] Distributed tracing with OpenTelemetry.

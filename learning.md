@@ -517,15 +517,18 @@ URL.revokeObjectURL(url) // free memory
 
 ---
 
+---
+
 ## Concepts Still To Come
 
-| Concept | Phase | Why |
+| Concept | Phase | Status |
 |---|---|---|
-| **Replication** | Phase 4 | Write each chunk to N nodes, read from any |
-| **Consistent Hashing** | Phase 6 | Distribute chunks across nodes without a lookup table |
-| **Raft Consensus** | Phase 7 | How distributed nodes agree on cluster state |
-| **Encryption at rest** | Phase 8 | AES-256 chunks before writing to disk |
-| **Prometheus metrics** | Phase 11 | Measuring upload latency, node health, throughput |
+| **Replication** | Phase 4 | ✅ Done — N copies per chunk |
+| **Consistent Hashing** | Phase 6 | ✅ Done — `pkg/ring` with virtual nodes |
+| **gRPC** | Phase 5 | ✅ Done — replaces internal HTTP |
+| **AES-GCM Encryption** | Phase 8* | ✅ Done — at rest encryption |
+| **Raft Consensus** | Phase 7 | 🔜 Next |
+| **Prometheus metrics** | Phase 11 | 🔜 Future |
 
 ---
 
@@ -550,8 +553,63 @@ When a Storage Node starts, it makes an HTTP POST to the Gateway saying "I am al
 
 ## 36. Heartbeat Monitoring (Phase 3)
 Just because a node registered doesn't mean it's still alive. A server could lose power or crash.
-The Gateway runs a background Goroutine (an infinite loop with a `time.Sleep`) that sends a GET request to every node's `/health` endpoint. If a node times out or fails, the Gateway marks it as `is_active = FALSE` so it stops sending data to a dead node.
+The Gateway runs a background Goroutine (an infinite loop with a `time.Sleep`) that pings every node's gRPC `Health()` endpoint. If a node times out or fails, the Gateway marks it as `is_active = FALSE` so it stops sending data to a dead node. In Phase 6, health checks run in parallel goroutines (one per node) so a slow node doesn't block all checks.
 
-## 37. Dynamic Routing & Load Balancing (Phase 3)
-Instead of using a hardcoded node, the Gateway runs `SELECT address FROM nodes WHERE is_active = TRUE ORDER BY RANDOM() LIMIT 1` for every chunk upload.
-This randomly distributes chunks across the entire cluster. If you have 5 nodes, the data spreads out evenly, multiplying your storage capacity and write speed by 5.
+## 37. Dynamic Routing & Load Balancing (Phase 3 → Phase 6)
+**Phase 3:** Gateway ran `SELECT address FROM nodes WHERE is_active = TRUE ORDER BY RANDOM() LIMIT 1` — purely random placement. Simple, but causes chaos when nodes join or leave (existing chunks are all in the wrong places).
+
+**Phase 6:** Replaced with **Consistent Hashing**. The chunk's SHA-256 hash determines *deterministically* which node(s) store it. Adding or removing a node only moves ~1/N of all chunks, not all of them.
+
+## 38. gRPC & Protocol Buffers (Phase 5)
+
+**Why replace HTTP with gRPC?**
+- HTTP/JSON is text-based — slower and more bandwidth-heavy than binary.
+- gRPC uses Protocol Buffers (binary serialization) — smaller payloads, faster parsing.
+- gRPC uses HTTP/2 under the hood — supports multiplexing (many requests over one TCP connection), reducing connection overhead.
+- Strongly typed `.proto` contracts prevent breaking changes silently.
+
+**How it works:**
+1. Define messages and services in `storage.proto`.
+2. `protoc` generates Go code (`storage.pb.go`, `storage_grpc.pb.go`).
+3. Storage Node implements `pb.StorageNodeServer` interface.
+4. Gateway uses `pb.NewStorageNodeClient(conn)` to call RPCs.
+5. Connections are cached by address in `StorageClient` (double-checked locking pattern).
+
+## 39. Consistent Hashing (Phase 6)
+
+The classic problem: you have N storage nodes and M chunks. You need to decide which node stores which chunk. Simple modulo hashing (`hash(chunk) % N`) breaks when N changes — you'd have to move nearly all chunks.
+
+**Consistent Hashing solves this:**
+1. Imagine a ring of positions 0 to 2^32-1.
+2. Hash each node's address to a position on the ring.
+3. To store chunk X: hash X, walk clockwise until you hit a node — that's where X lives.
+4. If a node joins/leaves, only the chunks whose clockwise successor changed need to move (roughly `M/N` chunks, not all of them).
+
+**Virtual Nodes:** To prevent uneven distribution (one node getting all the hot spots), each physical node is hashed 50 times (with different keys like `"node:9001-0"`, `"node:9001-1"`, etc.) and placed at 50 positions on the ring. This averages out the distribution dramatically.
+
+**In AtlasStore:** `pkg/ring/ring.go` implements this with a sorted `[]uint32` slice and a `map[uint32]string`. `sort.Search` performs a binary search to find the clockwise successor in O(log N) time.
+
+## 40. AES-GCM Encryption At Rest (Phase 8)
+
+**AES-GCM** (Advanced Encryption Standard in Galois/Counter Mode) provides both **confidentiality** (nobody can read the data) and **integrity** (nobody can tamper with it without detection).
+
+**How it works in AtlasStore:**
+1. Before a chunk is sent to a storage node, the Gateway calls `crypto.Encrypt(plaintext, key)`.
+2. A random 12-byte **nonce** (number-used-once) is generated per chunk.
+3. AES-GCM `Seal()` produces: `[nonce (12B) | ciphertext | auth_tag (16B)]`.
+4. This entire blob is sent to and stored on the storage node.
+5. On download, `crypto.Decrypt()` splits out the nonce, calls `aesGCM.Open()` which both decrypts AND verifies the auth tag.
+
+**Key insight:** The chunk's filename on disk is `sha256(plaintext)` — computed BEFORE encryption. So the integrity check on download compares `sha256(decrypted_bytes) == stored_hash`, giving you two layers of corruption detection.
+
+## 41. Rebalancing Worker (Phase 6.3)
+
+When a new node joins the cluster, the Hash Ring shifts — some chunk ranges now point to the new node. The `Rebalancer` handles this automatically:
+
+1. Every 60s, it fetches all chunk metadata from PostgreSQL.
+2. For each chunk, it asks the ring: "where should this chunk be?" (expectedNodes).
+3. It compares expectedNodes vs. currentNodes (what the DB says now).
+4. For any `missingNode` (expected but not current): download the chunk from an existing node, upload to the missing node, update DB.
+5. For any `obsoleteNode` (current but not expected): delete the chunk from the old node, update DB.
+
+The rebalancer only touches **encrypted bytes** — it never decrypts chunks during migration. It just moves the same ciphertext blob from one disk to another.

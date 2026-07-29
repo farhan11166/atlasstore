@@ -1,24 +1,33 @@
 # AtlasStore
 
-🚧 Status: Active Development (Phase 8 Encryption Complete) 🚧
-Currently building Phase 5 (gRPC migration).
+> 🎯 **Status: Phase 6 Complete — Consistent Hashing & Rebalancing** | Actively building Phase 7 (Raft Consensus)
 
-> A distributed object storage platform built in Go.
+> A distributed object storage platform built in Go — inspired by Amazon S3 and MinIO.
 
-AtlasStore is a learning-focused implementation of a distributed object storage system, heavily inspired by Amazon S3 and MinIO. It separates the Control Plane (API Gateway) from the Data Plane (Storage Nodes) to orchestrate chunked file uploads, distributed storage, and file reassembly.
+AtlasStore separates the **Control Plane** (API Gateway) from the **Data Plane** (Storage Nodes) to orchestrate chunked, encrypted, and replicated file storage across a cluster. It was built from scratch as a learning project in distributed systems.
 
 ---
 
-## 🚀 Features (Phase 1 MVP)
+## ✅ What's Built So Far
 
-- **Two-Server Architecture:** Decoupled Gateway (Port 8000) and Storage Node (Port 9000).
-- **Chunking Engine:** Large files are streamed and split into 5MB chunks on upload.
-- **Encryption At Rest:** Chunks are securely encrypted using AES-GCM before being stored on nodes.
-- **SHA-256 Integrity:** Chunks are content-hashed on upload and stored deterministically.
-- **Stateless Auth:** JWT-based registration and login system.
-- **PostgreSQL Metadata:** Tracks users, objects, chunk indices, and storage node placement.
-- **Streaming I/O:** Uploads and downloads are streamed through `io.Copy` to ensure memory safety, regardless of file size.
-- **Premium Web Dashboard:** A vanilla HTML/JS/CSS dashboard to manage files with drag-and-drop support, progress bars, and file-type icons.
+| Phase | Feature | Status |
+|---|---|---|
+| 1 | Two-server architecture (Gateway + Storage Node) | ✅ Done |
+| 1 | JWT Auth (Register / Login) | ✅ Done |
+| 1 | PostgreSQL metadata layer | ✅ Done |
+| 1 | Web Dashboard (upload, download, delete) | ✅ Done |
+| 2 | Chunking engine (5MB chunks, parallel upload/download) | ✅ Done |
+| 2 | SHA-256 integrity verification on download | ✅ Done |
+| 2 | Multipart upload support | ✅ Done |
+| 3 | Storage node auto-registration with Gateway | ✅ Done |
+| 3 | Background health checker (gRPC ping) | ✅ Done |
+| 4 | Replication (N copies per chunk) | ✅ Done |
+| 4 | Fallback download from replica on failure | ✅ Done |
+| 5 | gRPC migration (internal HTTP → gRPC) | ✅ Done |
+| 6 | Consistent Hashing ring with virtual nodes | ✅ Done |
+| 6 | Deterministic chunk placement via Hash Ring | ✅ Done |
+| 6 | Background Rebalancing Worker | ✅ Done |
+| 8* | Encryption at rest (AES-GCM) | ✅ Done |
 
 ---
 
@@ -28,24 +37,43 @@ AtlasStore is a learning-focused implementation of a distributed object storage 
        [Web Dashboard]
               │ (HTTP / JSON)
               ▼
-   ┌──────────────────────┐
-   │     API Gateway      │ ── (Metadata) ──► [ PostgreSQL DB ]
-   │  (Control Plane)     │
-   └──────────────────────┘
-              │ (Internal HTTP - Chunk Distribution)
-              ▼
-   ┌──────────────────────┐
-   │    Storage Node 1    │ ── (Raw Bytes) ──► [ Local Disk /data/node1 ]
-   │    (Data Plane)      │
-   └──────────────────────┘
+   ┌──────────────────────────────────────┐
+   │          API Gateway                 │ ← "Brain" / Control Plane
+   │  - JWT Auth                          │
+   │  - Consistent Hash Ring (50 vNodes)  │
+   │  - Background Health Checker         │
+   │  - Background Rebalancer             │ ── (Metadata) ──► [ PostgreSQL DB ]
+   │  - Encryption (AES-GCM)              │
+   └──────────────────────────────────────┘
+              │ (internal gRPC)
+      ┌───────┼───────┐
+      ▼       ▼       ▼
+   [Node A] [Node B] [Node C]    ← "Muscles" / Data Plane
+     Disk    Disk     Disk       ← Encrypted chunk files (named by SHA-256 hash)
 ```
+
+### How Chunk Placement Works
+
+1. File is split into **5MB chunks** (configurable).
+2. Each chunk is **AES-GCM encrypted** before leaving the Gateway.
+3. SHA-256 hash of the **plaintext** chunk is computed → used as the chunk's filename and lookup key.
+4. The **Consistent Hash Ring** maps the chunk hash → N storage node addresses (where N = replication factor).
+5. Chunks are saved to those nodes in parallel via **gRPC**.
+6. If a node is added or removed, the **Rebalancer** (runs every 60s) detects misplaced chunks and migrates them without downtime.
+
+---
 
 ## 🛠️ Tech Stack
 
-- **Backend:** Go 1.24 (Standard Library for HTTP and Crypto)
-- **Database:** PostgreSQL (via `lib/pq` and `golang-migrate`)
-- **Security:** `golang.org/x/crypto/bcrypt` (Password Hashing), `github.com/golang-jwt/jwt/v5` (Auth)
-- **Frontend:** Vanilla HTML, CSS, JavaScript (No frameworks)
+| Layer | Technology |
+|---|---|
+| Backend | Go 1.24 (standard library + minimal dependencies) |
+| Database | PostgreSQL (via `lib/pq` + `golang-migrate`) |
+| Internal Comms | gRPC + Protocol Buffers (`pkg/pb`) |
+| Auth | `bcrypt` (passwords) + `golang-jwt/jwt/v5` (tokens) |
+| Encryption | AES-GCM 256-bit (at rest) |
+| Hashing | SHA-256 (chunk integrity + consistent ring placement) |
+| Frontend | Vanilla HTML/CSS/JavaScript |
 
 ---
 
@@ -58,15 +86,13 @@ AtlasStore is a learning-focused implementation of a distributed object storage 
 
 ### 1. Setup Database
 
-Start the PostgreSQL container:
-
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 ### 2. Configure Environment
 
-Ensure your `.env` file looks like this:
+Ensure your `.env` file exists:
 
 ```env
 DB_HOST=localhost
@@ -78,40 +104,42 @@ DB_SSLMODE=disable
 
 JWT_SECRET=super_secret_key_change_in_production
 CHUNK_SIZE_MB=5
+REPLICATION_FACTOR=2
 
 GATEWAY_PORT=8000
-STORAGE_NODE_PORT=9000
+STORAGE_NODE_PORT=9001
+ENCRYPTION_KEY=0123456789abcdef0123456789abcdef
 ```
 
-### 3. Run the Servers
+### 3. Run the Cluster
 
-You need to run the Gateway and the Storage Node in two separate terminal windows.
+Open separate terminals for each process:
 
-**Terminal 1 (Gateway):**
-
+**Terminal 1 — Gateway:**
 ```bash
 go run ./cmd/gateway/
 ```
 
-_(This will automatically run database migrations and serve the frontend on port 8000)._
-
-**Terminal 2 (Storage Node):**
-
+**Terminal 2 — Storage Node A:**
 ```bash
-STORAGE_DATA_DIR=./data/node1 go run ./cmd/storagenode/
+STORAGE_DATA_DIR=./data/nodeA STORAGE_NODE_PORT=9001 go run ./cmd/storagenode/
 ```
+
+**Terminal 3 — Storage Node B (optional, for replication):**
+```bash
+STORAGE_DATA_DIR=./data/nodeB STORAGE_NODE_PORT=9002 go run ./cmd/storagenode/
+```
+
+Each storage node automatically registers itself with the Gateway on startup. The Gateway's Hash Ring will update within 10 seconds.
 
 ### 4. Access the Dashboard
 
-Open your browser and navigate to:
 **[http://localhost:8000](http://localhost:8000)**
 
 ---
 
 ## 📚 Internal Documentation
 
-For deep dives into _how_ and _why_ this system is built the way it is, check out:
-
 - [`internal.md`](./internal.md) — Directory maps, request flows, and component breakdown.
-- [`learning.md`](./learning.md) — Concept explanations (Connection Pooling, Hashing, Streaming, JWTs).
-- [`PLAN.md`](./PLAN.md) — The development roadmap and upcoming distributed systems features.
+- [`learning.md`](./learning.md) — Concept explanations (gRPC, Consistent Hashing, AES-GCM, Connection Pooling, JWTs, etc.).
+- [`PLAN.md`](./PLAN.md) — The full development roadmap.
