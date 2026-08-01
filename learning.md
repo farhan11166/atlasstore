@@ -613,3 +613,49 @@ When a new node joins the cluster, the Hash Ring shifts — some chunk ranges no
 5. For any `obsoleteNode` (current but not expected): delete the chunk from the old node, update DB.
 
 The rebalancer only touches **encrypted bytes** — it never decrypts chunks during migration. It just moves the same ciphertext blob from one disk to another.
+
+## 42. Raft Consensus (Phase 7)
+
+**The Problem:** In Phase 1-6, the entire cluster depended on PostgreSQL to know which nodes were alive. If PostgreSQL went down, the `RingManager` couldn't update the hash ring, new nodes couldn't join, and the cluster effectively stopped routing traffic.
+
+**The Solution:** The **Raft Consensus Algorithm** allows the storage nodes to form their own self-governing cluster and agree on a shared state (who is alive) without relying on a single central database.
+
+**How it works in AtlasStore:**
+1. **Leader Election:** When the nodes start, they vote to elect a **Leader**. If the Leader dies, the remaining nodes detect the missing heartbeat and elect a new Leader within 2-3 seconds.
+2. **Replicated Log:** State changes (like `NodeJoin` or `NodeLeave`) are sent to the Leader. The Leader writes it to a log and replicates it to the **Followers**.
+3. **Quorum:** A log entry is only "committed" when a majority of nodes (e.g., 2 out of 3) acknowledge it. This prevents "split-brain" scenarios where the network partitions in half.
+4. **FSM (Finite State Machine):** Once committed, the `Apply()` function is called, which actually updates the `map[string]bool` in memory indicating which nodes are alive.
+5. **Gateway Routing:** The Gateway's `RingManager` now makes an HTTP request to the Raft cluster's `/state` endpoint to build the Hash Ring. If the Raft cluster goes down, it falls back to checking PostgreSQL.
+
+**Tools used:**
+- `hashicorp/raft`: The core algorithm engine (handles elections, heartbeats, replication).
+- `raft-boltdb`: An embedded key-value store that persists the Raft log to a file (`raft.db`) so the node remembers its state after a reboot.
+
+## 43. The "Follower Write" Bug (Raft Golden Rule)
+
+While building the Raft integration, we encountered a bug where the Gateway only saw 1 node, even though 3 nodes were in the cluster.
+
+**The Cause:** We had a background script on every node running `raftNode.Apply(nodeJoinCommand)`.
+**The Raft Golden Rule:** *Only the Leader can append entries to the log.* 
+
+When Node B (a Follower) ran `Apply()`, the Raft engine silently rejected it. Node B is not allowed to change the cluster state. To fix this, we updated the architecture so that when Node B wants to join, it sends an HTTP request to the Leader (`/join`), and the **Leader** executes `raftNode.Apply()` on Node B's behalf. This ensures all state changes flow through a single funnel (the Leader) to guarantee consistency.
+
+## 44. Deep Dive: How the Hash Ring Really Works
+
+The Hash Ring (`pkg/ring/ring.go`) can be confusing. Here is a simple mental model of what it actually does when you upload a file.
+
+**The Setup (Adding Nodes):**
+1. You start Node A (`localhost:9001`).
+2. The RingManager takes the string `"localhost:9001"`, appends a number to it (e.g., `"localhost:9001-0"`), hashes it with SHA-256, and turns that hash into a single huge integer: `2,847,192,304`.
+3. It does this 50 times (`-1`, `-2`, etc.), creating 50 different integers for Node A. These are **Virtual Nodes**.
+4. It repeats this for Node B and Node C.
+5. It throws all 150 integers into an array and **sorts it from lowest to highest**.
+
+**The Action (Uploading a Chunk):**
+1. A user uploads a chunk of a file.
+2. We hash the *content* of the chunk using SHA-256 and turn it into a single huge integer: `3,100,000,000`.
+3. We look at our sorted array of 150 node integers. We perform a **Binary Search** to find the first integer in the array that is *greater* than the chunk's integer.
+4. Let's say the very next integer in the array is `3,250,911,200` — and that integer belongs to `"localhost:9002-14"` (Node B).
+5. Therefore, the chunk goes to **Node B**.
+
+**Why this is genius:** If you add Node D to the cluster, you just insert 50 new integers into the sorted array. When you hash that same chunk again, 90% of the time, its "next highest integer" will still be Node B! Only the chunks that happened to fall right next to Node D's new integers will change their destination. This is why you don't have to move all your data when scaling up.

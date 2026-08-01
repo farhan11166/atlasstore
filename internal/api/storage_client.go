@@ -39,8 +39,15 @@ func (c *StorageClient) getClient(address string) (pb.StorageNodeClient, error) 
 		return pb.NewStorageNodeClient(conn), nil
 	}
 
-	// Connect via gRPC
-	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Connect via gRPC (increase limits to 10MB)
+	conn, err := grpc.Dial(
+		address,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(10*1024*1024),
+			grpc.MaxCallSendMsgSize(10*1024*1024),
+		),
+	)
 	if err != nil {
 		return nil, err
 	}

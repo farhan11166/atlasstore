@@ -117,10 +117,10 @@ _Target: Weeks 1-4_
 ## Phase 7+ — Future Horizons
 
 ### Phase 7: Consensus / Raft for Cluster State Management
-- [ ] Allow Storage Nodes to form their own cluster and elect a leader.
-- [ ] Nodes agree on cluster membership without relying on PostgreSQL as the single source of truth.
-- [ ] Implement `etcd`-style distributed key-value store for cluster configuration.
-- [ ] If PostgreSQL goes down, the cluster continues to function.
+- [x] Allow Storage Nodes to form their own cluster and elect a leader.
+- [x] Nodes agree on cluster membership without relying on PostgreSQL as the single source of truth.
+- [x] Implement HTTP API for node joining and state querying.
+- [x] Gateway queries Raft cluster for active nodes, falling back to PostgreSQL if unreachable.
 
 ### Phase 8-10: Fault Tolerance & Production Features
 - [x] Encryption At Rest (AES-GCM 256-bit) — chunks encrypted before hitting the wire.
