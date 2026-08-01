@@ -16,6 +16,7 @@ import (
 	"github.com/farhan/atlasstore/internal/auth"
 	"github.com/farhan/atlasstore/internal/crypto"
 	"github.com/farhan/atlasstore/internal/db"
+	"github.com/golang/snappy"
 )
 
 type ObjectHandler struct {
@@ -74,7 +75,8 @@ func (h *ObjectHandler) Upload(w http.ResponseWriter, r *http.Request) {
 			g.Go(func() error {
 				hash := sha256hex(chunk)
 
-				encryptedChunk, err := crypto.Encrypt(chunk, h.EncryptionKey)
+				compressedChunk := snappy.Encode(nil, chunk)
+				encryptedChunk, err := crypto.Encrypt(compressedChunk, h.EncryptionKey)
 				if err != nil {
 					return fmt.Errorf("failed to encrypt chunk: %w", err)
 				}
@@ -178,12 +180,18 @@ func (h *ObjectHandler) Download(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			if actualHash := sha256hex(decryptedData); actualHash != chunk.Hash {
+			decompressedData, err := snappy.Decode(nil, decryptedData)
+			if err != nil {
+				fmt.Printf("Warning: Failed to decompress chunk %s: %v\n", chunk.Hash, err)
+				continue
+			}
+
+			if actualHash := sha256hex(decompressedData); actualHash != chunk.Hash {
 				fmt.Printf("Warning: Data corruption on node %s for chunk %s\n", nodeAddr, chunk.Hash)
 				continue
 			}
-			
-			data = decryptedData
+
+			data = decompressedData
 			success = true
 			break
 		}
@@ -297,9 +305,10 @@ func (h *ObjectHandler) UploadPart(w http.ResponseWriter, r *http.Request) {
 
 	hash := sha256hex(chunkData)
 
-	encryptedChunk, err := crypto.Encrypt(chunkData, h.EncryptionKey)
+	compressedChunk := snappy.Encode(nil, chunkData)
+	encryptedChunk, err := crypto.Encrypt(compressedChunk, h.EncryptionKey)
 	if err != nil {
-		http.Error(w, "failed to encrypt chunk", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to encrypt chunk: %v", err), http.StatusInternalServerError)
 		return
 	}
 

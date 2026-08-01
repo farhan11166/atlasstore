@@ -659,3 +659,20 @@ The Hash Ring (`pkg/ring/ring.go`) can be confusing. Here is a simple mental mod
 5. Therefore, the chunk goes to **Node B**.
 
 **Why this is genius:** If you add Node D to the cluster, you just insert 50 new integers into the sorted array. When you hash that same chunk again, 90% of the time, its "next highest integer" will still be Node B! Only the chunks that happened to fall right next to Node D's new integers will change their destination. This is why you don't have to move all your data when scaling up.
+
+## 45. Data Compression and Encryption (Phase 8)
+
+When building a storage pipeline, the order of operations matters drastically:
+
+**The Golden Rule:** Always compress data *before* you encrypt it.
+
+If you encrypt a file first, the output becomes indistinguishable from random noise (high entropy). Compression algorithms (like Snappy or ZIP) work by finding repeated patterns in data. Because random noise has zero repeated patterns, it is mathematically impossible to compress encrypted data! 
+
+**Our Upload Pipeline:**
+1. Split file into 5MB chunks.
+2. Run `snappy.Encode` (shrinks the chunk if it's text/JSON).
+3. Run `crypto.Encrypt` (AES-GCM encryption for security).
+4. Send to storage node.
+
+By compressing before encrypting, we save 30-50% on disk space for compressible files without sacrificing any security.
+

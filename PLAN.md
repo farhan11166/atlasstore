@@ -124,7 +124,7 @@ _Target: Weeks 1-4_
 
 ### Phase 8-10: Fault Tolerance & Production Features
 - [x] Encryption At Rest (AES-GCM 256-bit) — chunks encrypted before hitting the wire.
-- [ ] Data Compression (snappy or zstd) before encryption.
+- [x] Data Compression (snappy) before encryption.
 - [ ] Circuit Breaker pattern for node communication.
 - [ ] Graceful degradation when quorum is lost.
 
