@@ -21,19 +21,28 @@ import (
 	atlasraft "github.com/farhan/atlasstore/pkg/raft"
 )
 
-func registerWithGateway(gatewayURL, nodeAddress string) {
+func registerWithGateway(gatewayURL, nodeAddress, clusterSecret string) {
 	reqBody, _ := json.Marshal(map[string]string{"address": nodeAddress})
-	resp, err := http.Post(gatewayURL+"/nodes/register", "application/json", bytes.NewBuffer(reqBody))
+	req, _ := http.NewRequest("POST", gatewayURL+"/nodes/register", bytes.NewBuffer(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Cluster-Token", clusterSecret)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		log.Printf("Warning: Failed to register with gateway: %v", err)
 	} else {
 		log.Println("Successfully registered with Gateway!")
 	}
 }
-func startRaftAPI(raftNode *hraft.Raft, fsm *atlasraft.ClusterFSM, apiPort string) {
+func startRaftAPI(raftNode *hraft.Raft, fsm *atlasraft.ClusterFSM, apiPort, clusterSecret string) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/join", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Cluster-Token") != clusterSecret {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
 		if raftNode.State() != hraft.Leader {
 			http.Error(w, "Not the leader", http.StatusBadGateway)
 			return
@@ -67,6 +76,10 @@ func startRaftAPI(raftNode *hraft.Raft, fsm *atlasraft.ClusterFSM, apiPort strin
 		w.Write([]byte("joined successfully"))
 	})
 	mux.HandleFunc("/state", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Cluster-Token") != clusterSecret {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 
 		leaderAddr := ""
@@ -171,14 +184,17 @@ func main() {
 	fsm := atlasraft.NewClusterFSM()
 	raftNode, err := startRaft(raftAddr, raftDataDir, "localhost:"+cfg.StorageNodePort, peers, fsm)
 	raftAPIPort := fmt.Sprintf("2%s", cfg.StorageNodePort)
-	startRaftAPI(raftNode, fsm, raftAPIPort)
+	startRaftAPI(raftNode, fsm, raftAPIPort, cfg.ClusterSecret)
 	if len(peers) > 0 {
 		go func() {
 			joined := false
 			for !joined {
 				for _, peerAPIAddr := range peers {
 					joinURL := fmt.Sprintf("http://%s/join?id=%s&addr=%s&grpc_addr=%s", peerAPIAddr, raftAddr, raftAddr, "localhost:"+cfg.StorageNodePort)
-					resp, err := http.Post(joinURL, "application/json", nil)
+					
+					req, _ := http.NewRequest("POST", joinURL, nil)
+					req.Header.Set("X-Cluster-Token", cfg.ClusterSecret)
+					resp, err := http.DefaultClient.Do(req)
 					if err == nil && resp.StatusCode == http.StatusOK {
 						log.Printf("Successfully joined Raft cluster via %s", peerAPIAddr)
 						joined = true
@@ -227,7 +243,7 @@ func main() {
 	pb.RegisterStorageNodeServer(grpcServer, handler)
 
 	gatewayURL := "http://localhost:8000"
-	registerWithGateway(gatewayURL, "localhost:"+cfg.StorageNodePort)
+	registerWithGateway(gatewayURL, "localhost:"+cfg.StorageNodePort, cfg.ClusterSecret)
 
 	log.Printf("Storage node (gRPC) on %s | Raft on %s | data: %s", grpcAddr, raftAddr, dataDir)
 

@@ -676,3 +676,30 @@ If you encrypt a file first, the output becomes indistinguishable from random no
 
 By compressing before encrypting, we save 30-50% on disk space for compressible files without sacrificing any security.
 
+## 46. Circuit Breaker Pattern (Phase 9)
+
+In distributed systems, handling node failures efficiently is critical. If a Gateway attempts to send data to a crashed Storage Node, the network request will hang until it times out (e.g., 10 seconds). In a high-traffic environment, these hanging requests will quickly exhaust the Gateway's thread pool and memory, causing the entire Gateway to crash (a cascading failure).
+
+To solve this, we implemented the **Circuit Breaker Pattern** (`internal/api/storage_client.go`):
+- **CLOSED (Healthy):** Requests flow normally to the node.
+- **OPEN (Tripped):** If a node fails 3 consecutive times, the breaker "trips". For the next 30 seconds, any request to this node **instantly fails** locally, without making a network call. This prevents the Gateway from hanging and gives the node time to recover.
+- **HALF-OPEN:** After 30 seconds, the breaker allows a *single test request* through. If it succeeds, the breaker resets to CLOSED. If it fails, it returns to OPEN for another 30 seconds.
+
+This pattern is a staple of microservice architecture and is heavily utilized by systems like Netflix (Hystrix) and AWS.
+
+## 47. Internal Infrastructure Security (Pre-Shared Cluster Token)
+
+In a distributed system, you have two types of APIs:
+1. **User APIs:** (`/objects`, `/login`) accessed by humans/clients. These are protected via JWTs (JSON Web Tokens).
+2. **Infrastructure APIs:** (`/nodes/register`, `/join`, `/state`) accessed *only* by other internal servers.
+
+We discovered a major security flaw: our Infrastructure APIs were completely unauthenticated! Anyone could hit `POST /nodes/register` on the Gateway and redirect user data to a hacker's machine, or inject rogue nodes into the Raft cluster via `POST /join`.
+
+To fix this, we implemented a **Pre-Shared Cluster Token** mechanism:
+- A secret password (`CLUSTER_SECRET`) is stored in the `.env` file of all nodes and the Gateway.
+- We created a custom HTTP Middleware (`RequireClusterSecret`) that intercepts requests and checks for the `X-Cluster-Token` HTTP header.
+- The Gateway injects this header when asking Raft for `/state`.
+- The Storage Nodes inject this header when asking the Gateway to `/nodes/register` and when asking the Leader to `/join`.
+
+If the token is missing or incorrect, the server instantly returns `403 Forbidden`. This effectively creates an invisible shield around the internal cluster communication.
+

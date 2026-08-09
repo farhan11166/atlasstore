@@ -11,15 +11,86 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+type CircuitState string
+
+const (
+	StateClosed   CircuitState = "CLOSED"
+	StateOpen     CircuitState = "OPEN"
+	StateHalfOpen CircuitState = "HALF_OPEN"
+)
+
+type CircuitBreaker struct {
+	state       CircuitState
+	failures    int
+	lastFailure time.Time
+	mu          sync.Mutex
+}
+
 type StorageClient struct {
 	conns   map[string]*grpc.ClientConn
 	connsMu sync.RWMutex
+
+	breakers   map[string]*CircuitBreaker
+	breakersMu sync.RWMutex
 }
 
 func NewStorageClient() *StorageClient {
 	return &StorageClient{
-		conns: make(map[string]*grpc.ClientConn),
+		conns:    make(map[string]*grpc.ClientConn),
+		breakers: make(map[string]*CircuitBreaker),
 	}
+}
+
+func (c *StorageClient) getBreaker(address string) *CircuitBreaker {
+	c.breakersMu.Lock()
+	defer c.breakersMu.Unlock()
+
+	if b, exists := c.breakers[address]; exists {
+		return b
+	}
+	//in caase doesnt existss
+	b := &CircuitBreaker{state: StateClosed}
+	c.breakers[address] = b
+	return b
+
+}
+
+func (c *StorageClient) executewithBreaker(address string, operation func() error) error{
+	cb := c.getBreaker((address))
+
+	cb.mu.Lock()
+	if cb.state==StateOpen{
+		if time.Since(cb.lastFailure) > 30*time.Second {
+			cb.state = StateHalfOpen // Time to test the waters!
+		} else{
+			cb.mu.Unlock()
+			return fmt.Errorf("circuit breaker open for node %s", address) // INSTANT FAIL
+
+		}
+		
+
+	}
+
+	cb.mu.Unlock()
+
+	err := operation()
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	if err != nil {
+		// Operation failed!
+		cb.failures++
+		cb.lastFailure = time.Now()
+		if cb.failures >= 3 {
+			cb.state = StateOpen // Trip the breaker!
+		}
+		return err
+	}
+	// Operation succeeded! Reset everything.
+	cb.failures = 0
+	cb.state = StateClosed
+	return nil
+
+
 }
 
 // getClient retrieves a cached connection or dials a new one
@@ -64,18 +135,20 @@ func (c *StorageClient) SaveChunk(nodeAddresses []string, hash string, data []by
 		wg.Add(1)
 		go func(address string) {
 			defer wg.Done()
-			client, err := c.getClient(address)
-			if err != nil {
-				mu.Lock()
-				errs = append(errs, fmt.Errorf("dial %s: %w", address, err))
-				mu.Unlock()
-				return
-			}
+			
+			err := c.executewithBreaker(address, func() error {
+				client, err := c.getClient(address)
+				if err != nil {
+					return err
+				}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
 
-			_, err = client.SaveChunk(ctx, &pb.SaveChunkRequest{Hash: hash, Data: data})
+				_, err = client.SaveChunk(ctx, &pb.SaveChunkRequest{Hash: hash, Data: data})
+				return err
+			})
+
 			if err != nil {
 				mu.Lock()
 				errs = append(errs, fmt.Errorf("save chunk to %s: %w", address, err))
@@ -88,44 +161,57 @@ func (c *StorageClient) SaveChunk(nodeAddresses []string, hash string, data []by
 }
 
 func (c *StorageClient) GetChunk(nodeAddress string, hash string) ([]byte, error) {
-	client, err := c.getClient(nodeAddress)
-	if err != nil {
-		return nil, err
-	}
+	var resultData []byte
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	err := c.executewithBreaker(nodeAddress, func() error {
+		client, err := c.getClient(nodeAddress)
+		if err != nil {
+			return err
+		}
 
-	resp, err := client.GetChunk(ctx, &pb.GetChunkRequest{Hash: hash})
-	if err != nil {
-		return nil, err
-	}
-	return resp.Data, nil
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		resp, err := client.GetChunk(ctx, &pb.GetChunkRequest{Hash: hash})
+		if err != nil {
+			return err
+		}
+		resultData = resp.Data
+		return nil
+	})
+
+	return resultData, err
 }
 
 func (c *StorageClient) DeleteChunk(nodeAddress string, hash string) error {
-	client, err := c.getClient(nodeAddress)
-	if err != nil {
+	return c.executewithBreaker(nodeAddress, func() error {
+		client, err := c.getClient(nodeAddress)
+		if err != nil {
+			return err
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		_, err = client.DeleteChunk(ctx, &pb.DeleteChunkRequest{Hash: hash})
 		return err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	_, err = client.DeleteChunk(ctx, &pb.DeleteChunkRequest{Hash: hash})
-	return err
+	})
 }
 
 // Health is a helper to check if a node is alive via gRPC
 func (c *StorageClient) Health(nodeAddress string) bool {
-	client, err := c.getClient(nodeAddress)
-	if err != nil {
-		return false
-	}
+	err := c.executewithBreaker(nodeAddress, func() error {
+		client, err := c.getClient(nodeAddress)
+		if err != nil {
+			return err
+		}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
 
-	_, err = client.Health(ctx, &pb.HealthRequest{})
+		_, err = client.Health(ctx, &pb.HealthRequest{})
+		return err
+	})
+
 	return err == nil
 }

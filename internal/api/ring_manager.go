@@ -14,15 +14,17 @@ import (
 )
 
 type RingManager struct {
-	DB   *sql.DB
-	Ring *ring.HashRing
-	mu   sync.RWMutex
+	DB            *sql.DB
+	Ring          *ring.HashRing
+	ClusterSecret string
+	mu            sync.RWMutex
 }
 
-func NewRingManager(database *sql.DB, vNodes int) *RingManager {
+func NewRingManager(database *sql.DB, vNodes int, clusterSecret string) *RingManager {
 	return &RingManager{
-		DB:   database,
-		Ring: ring.New(vNodes),
+		DB:            database,
+		Ring:          ring.New(vNodes),
+		ClusterSecret: clusterSecret,
 	}
 }
 
@@ -31,7 +33,7 @@ func (rm *RingManager) SyncLoop() {
 		for {
 			var activeNodes []string
 
-			raftNodes, err := fetchRaftClusterState("http://localhost:29001")
+			raftNodes, err := fetchRaftClusterState("http://localhost:29001", rm.ClusterSecret)
 			if err == nil {
 				activeNodes = raftNodes
 				log.Printf("RingManager: synchronized ring from Raft cluster (found %d nodes)", len(activeNodes))
@@ -62,8 +64,15 @@ func (rm *RingManager) SyncLoop() {
 		}
 	}()
 }
-func fetchRaftClusterState(raftAPIURL string) ([]string, error) {
-	resp, err := http.Get(raftAPIURL + "/state")
+func fetchRaftClusterState(raftAPIURL string, clusterSecret string) ([]string, error) {
+	req, err := http.NewRequest("GET", raftAPIURL+"/state", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Cluster-Token", clusterSecret)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}

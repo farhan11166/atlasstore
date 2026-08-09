@@ -24,6 +24,7 @@ type Config struct {
 	ChunkSizeMB       int
 	ReplicationFactor int
 	EncryptionKey     []byte
+	ClusterSecret     string
 }
 
 func Load() (*Config, error) {
@@ -50,6 +51,7 @@ func Load() (*Config, error) {
 		DBName:          getEnv("DB_NAME", "atlasstore"),
 		JWTSecret:       getEnv("JWT_SECRET", ""),
 		EncryptionKey:   enckey,
+		ClusterSecret:   getEnv("CLUSTER_SECRET", "atlas_cluster_token_123"),
 	}
 
 	if cfg.JWTSecret == "" {

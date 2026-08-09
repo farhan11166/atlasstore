@@ -18,7 +18,7 @@ func NewRouter(cfg *config.Config, database *sql.DB) http.Handler {
 	}
 	storageClient := NewStorageClient() // making a new empty client
 
-	ringManager := NewRingManager(database, 50)
+	ringManager := NewRingManager(database, 50, cfg.ClusterSecret)
 	ringManager.SyncLoop()
 
 	StartHealthChecker(database, storageClient)
@@ -52,8 +52,9 @@ func NewRouter(cfg *config.Config, database *sql.DB) http.Handler {
 	mux.Handle("POST /multipart/{upload_id}/{part_number}", protected(http.HandlerFunc(objectHandler.UploadPart)))
 	mux.Handle("POST /multipart/{upload_id}/complete", protected(http.HandlerFunc(objectHandler.CompleteMultipart)))
 
-	mux.HandleFunc("POST /nodes/register", nodeHandler.Register)
+	// Protect infrastructure endpoints with the cluster secret
+	infraProtected := auth.RequireClusterSecret(cfg.ClusterSecret)
+	mux.Handle("POST /nodes/register", infraProtected(http.HandlerFunc(nodeHandler.Register)))
 
 	return mux
-
 }

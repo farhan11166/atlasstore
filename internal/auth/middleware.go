@@ -47,3 +47,18 @@ func RequireAuth(jwtSecret string) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+// RequireClusterSecret ensures that internal infrastructure API endpoints
+// can only be accessed by other nodes possessing the shared cluster secret.
+func RequireClusterSecret(clusterSecret string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			token := r.Header.Get("X-Cluster-Token")
+			if token == "" || token != clusterSecret {
+				http.Error(w, "forbidden: invalid cluster token", http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
