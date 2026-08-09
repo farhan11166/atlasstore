@@ -55,19 +55,18 @@ func (c *StorageClient) getBreaker(address string) *CircuitBreaker {
 
 }
 
-func (c *StorageClient) executewithBreaker(address string, operation func() error) error{
+func (c *StorageClient) executewithBreaker(address string, operation func() error) error {
 	cb := c.getBreaker((address))
 
 	cb.mu.Lock()
-	if cb.state==StateOpen{
+	if cb.state == StateOpen {
 		if time.Since(cb.lastFailure) > 30*time.Second {
 			cb.state = StateHalfOpen // Time to test the waters!
-		} else{
+		} else {
 			cb.mu.Unlock()
 			return fmt.Errorf("circuit breaker open for node %s", address) // INSTANT FAIL
 
 		}
-		
 
 	}
 
@@ -89,7 +88,6 @@ func (c *StorageClient) executewithBreaker(address string, operation func() erro
 	cb.failures = 0
 	cb.state = StateClosed
 	return nil
-
 
 }
 
@@ -126,8 +124,9 @@ func (c *StorageClient) getClient(address string) (pb.StorageNodeClient, error) 
 	return pb.NewStorageNodeClient(conn), nil
 }
 
-func (c *StorageClient) SaveChunk(nodeAddresses []string, hash string, data []byte) []error {
+func (c *StorageClient) SaveChunk(nodeAddresses []string, hash string, data []byte) ([]string, []error) {
 	var errs []error
+	var successAddrs []string
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
@@ -135,7 +134,7 @@ func (c *StorageClient) SaveChunk(nodeAddresses []string, hash string, data []by
 		wg.Add(1)
 		go func(address string) {
 			defer wg.Done()
-			
+
 			err := c.executewithBreaker(address, func() error {
 				client, err := c.getClient(address)
 				if err != nil {
@@ -148,16 +147,20 @@ func (c *StorageClient) SaveChunk(nodeAddresses []string, hash string, data []by
 				_, err = client.SaveChunk(ctx, &pb.SaveChunkRequest{Hash: hash, Data: data})
 				return err
 			})
+			mu.Lock()
 
 			if err != nil {
-				mu.Lock()
+
 				errs = append(errs, fmt.Errorf("save chunk to %s: %w", address, err))
-				mu.Unlock()
+
+			} else {
+				successAddrs = append(successAddrs, address)
 			}
 		}(addr)
+		mu.Unlock()
 	}
 	wg.Wait()
-	return errs
+	return successAddrs, errs
 }
 
 func (c *StorageClient) GetChunk(nodeAddress string, hash string) ([]byte, error) {

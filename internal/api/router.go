@@ -18,7 +18,8 @@ func NewRouter(cfg *config.Config, database *sql.DB) http.Handler {
 	}
 	storageClient := NewStorageClient() // making a new empty client
 
-	ringManager := NewRingManager(database, 50, cfg.ClusterSecret)
+	quorumSize := (cfg.ReplicationFactor / 2) + 1
+	ringManager := NewRingManager(database, 50, cfg.ClusterSecret, quorumSize)
 	ringManager.SyncLoop()
 
 	StartHealthChecker(database, storageClient)

@@ -23,6 +23,7 @@ type Config struct {
 	JWTExpiryHours    int
 	ChunkSizeMB       int
 	ReplicationFactor int
+	QuorumSize        int
 	EncryptionKey     []byte
 	ClusterSecret     string
 }
@@ -74,6 +75,7 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid REPLICATION_FACTOR: %w", err)
 	}
+	cfg.QuorumSize = cfg.ReplicationFactor/2 + 1
 
 	// Assemble the DSN (Data Source Name) for database/sql / lib/pq
 	cfg.DBDSN = fmt.Sprintf(

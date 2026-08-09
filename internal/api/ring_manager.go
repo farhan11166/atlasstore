@@ -18,13 +18,17 @@ type RingManager struct {
 	Ring          *ring.HashRing
 	ClusterSecret string
 	mu            sync.RWMutex
+	degraded      bool
+	quorumSize    int
+	activeCount   int
 }
 
-func NewRingManager(database *sql.DB, vNodes int, clusterSecret string) *RingManager {
+func NewRingManager(database *sql.DB, vNodes int, clusterSecret string, quorumSize int) *RingManager {
 	return &RingManager{
 		DB:            database,
 		Ring:          ring.New(vNodes),
 		ClusterSecret: clusterSecret,
+		quorumSize:    quorumSize,
 	}
 }
 
@@ -58,6 +62,18 @@ func (rm *RingManager) SyncLoop() {
 			for _, addr := range activeNodes {
 				rm.Ring.AddNode(addr)
 			}
+			rm.activeCount = len(activeNodes)
+
+			if !rm.degraded && rm.activeCount < rm.quorumSize {
+				rm.degraded = true
+				log.Printf("[DEGRADED] active_nodes=%d quorum=%d", rm.activeCount, rm.quorumSize)
+
+			}
+			if rm.degraded && rm.activeCount >= rm.quorumSize {
+				rm.degraded = false
+				log.Printf("[RECOVERED] active_nodes=%d quorum=%d", rm.activeCount, rm.quorumSize)
+			}
+
 			rm.mu.Unlock()
 			time.Sleep(10 * time.Second) // Poll every 10 seconds
 
@@ -87,4 +103,15 @@ func fetchRaftClusterState(raftAPIURL string, clusterSecret string) ([]string, e
 		return nil, err
 	}
 	return state.Nodes, nil
+}
+func (rm *RingManager) IsDegraded() bool {
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+	return rm.degraded
+}
+
+func (rm *RingManager) ActiveNodeCount() int {
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+	return rm.activeCount
 }

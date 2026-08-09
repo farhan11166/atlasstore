@@ -25,6 +25,7 @@ type ObjectHandler struct {
 	RingManager       *RingManager
 	ChunkSizeMB       int
 	ReplicationFactor int
+	QuorumSize        int
 	EncryptionKey     []byte
 }
 
@@ -86,12 +87,14 @@ func (h *ObjectHandler) Upload(w http.ResponseWriter, r *http.Request) {
 					return fmt.Errorf("no healthy storage node available")
 				}
 
-				if saveErrs := h.StorageClient.SaveChunk(nodeAddresses, hash, encryptedChunk); len(saveErrs) > 0 {
+				successNodes, saveErrs := h.StorageClient.SaveChunk(nodeAddresses, hash, encryptedChunk)
+				quorum := (h.ReplicationFactor / 2) + 1
+				if len(successNodes) < quorum {
 					fmt.Printf("SaveChunk errors in Upload: %v\n", saveErrs)
-					return fmt.Errorf("upload failed: %v", saveErrs)
+					return fmt.Errorf("upload failed: quorum not met (needed %d, got %d). errors: %v", quorum, len(successNodes), saveErrs)
 				}
 				mu.Lock()
-				metas = append(metas, chunkMeta{index: idx, hash: hash, size: int64(n), nodes: nodeAddresses})
+				metas = append(metas, chunkMeta{index: idx, hash: hash, size: int64(n), nodes: successNodes})
 				totalSize += int64(n)
 				mu.Unlock()
 
@@ -318,13 +321,15 @@ func (h *ObjectHandler) UploadPart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if saveErrs := h.StorageClient.SaveChunk(nodeAddresses, hash, encryptedChunk); len(saveErrs) > 0 {
+	successNodes, saveErrs := h.StorageClient.SaveChunk(nodeAddresses, hash, encryptedChunk)
+	quorum := (h.ReplicationFactor / 2) + 1
+	if len(successNodes) < quorum {
 		fmt.Printf("SaveChunk errors in UploadPart: %v\n", saveErrs)
-		http.Error(w, "failed to store chunk on storage node", http.StatusInternalServerError)
+		http.Error(w, "failed to store chunk on storage node (quorum not met)", http.StatusInternalServerError)
 		return
 	}
 
-	if err := db.CreateMultipartChunk(h.DB, uploadID, partNumber, hash, int64(len(chunkData)), nodeAddresses); err != nil {
+	if err := db.CreateMultipartChunk(h.DB, uploadID, partNumber, hash, int64(len(chunkData)), successNodes); err != nil {
 		http.Error(w, "failed to save chunk metadata", http.StatusInternalServerError)
 		return
 	}

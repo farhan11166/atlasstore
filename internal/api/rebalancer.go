@@ -85,13 +85,12 @@ func StartRebalancer(ringManager *RingManager, storageClient *StorageClient, rep
 
 				// Upload to missing nodes
 				if len(missingNodes) > 0 {
-					errs := storageClient.SaveChunk(missingNodes, chunk.Hash, chunkData)
+					successNodes, errs := storageClient.SaveChunk(missingNodes, chunk.Hash, chunkData)
 					if len(errs) > 0 {
-						log.Printf("Rebalancer: failed to save chunk %s to new nodes", chunk.Hash)
-						continue
+						log.Printf("Rebalancer: encountered errors saving chunk %s to some new nodes: %v", chunk.Hash, errs)
 					}
 					// Update DB
-					for _, n := range missingNodes {
+					for _, n := range successNodes {
 						db.AddChunkLocation(ringManager.DB, chunk.ID, n)
 					}
 				}
