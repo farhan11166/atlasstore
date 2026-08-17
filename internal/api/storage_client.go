@@ -156,8 +156,8 @@ func (c *StorageClient) SaveChunk(nodeAddresses []string, hash string, data []by
 			} else {
 				successAddrs = append(successAddrs, address)
 			}
+			mu.Unlock()
 		}(addr)
-		mu.Unlock()
 	}
 	wg.Wait()
 	return successAddrs, errs

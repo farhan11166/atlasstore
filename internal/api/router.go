@@ -6,6 +6,7 @@ import (
 
 	"github.com/farhan/atlasstore/internal/auth"
 	"github.com/farhan/atlasstore/internal/config"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func NewRouter(cfg *config.Config, database *sql.DB) http.Handler {
@@ -56,6 +57,9 @@ func NewRouter(cfg *config.Config, database *sql.DB) http.Handler {
 	// Protect infrastructure endpoints with the cluster secret
 	infraProtected := auth.RequireClusterSecret(cfg.ClusterSecret)
 	mux.Handle("POST /nodes/register", infraProtected(http.HandlerFunc(nodeHandler.Register)))
+
+	// Expose Prometheus metrics
+	mux.Handle("GET /metrics", promhttp.Handler())
 
 	return mux
 }

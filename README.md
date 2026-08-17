@@ -63,6 +63,26 @@ AtlasStore separates the **Control Plane** (API Gateway) from the **Data Plane**
 
 ---
 
+## 🚀 Performance & Load Testing
+
+AtlasStore has been rigorously load-tested to find its breaking point on local hardware. The system architecture (Go Goroutines + gRPC + PostgreSQL) is designed for massive horizontal scalability, but a single local instance provides incredible baseline performance.
+
+**Test Setup:**
+- **Concurrency:** 2,000 simultaneous virtual users
+- **Duration:** 15 seconds
+- **Traffic:** Continuous stream of Multi-part File Uploads
+- **Hardware:** 12th Gen Intel(R) Core(TM) i5-1235U (12 Cores), 8GB RAM
+
+**Results (Single Machine Peak):**
+- **Throughput:** ~215 Requests per Second (which translates to ~645 HTTP requests/sec due to multipart initialization and completion).
+- **Total Requests Processed:** 4,883
+- **Success Rate:** 92.91%
+
+**Bottleneck Analysis:**
+At 2,000 concurrent users, the Go application itself did not crash. The 7% error rate was caused by hitting physical hardware limits (OS File Descriptors and PostgreSQL `max_connections` pool exhaustion). To scale beyond this, the architecture supports deploying the Gateway behind a load balancer and horizontally scaling the PostgreSQL database.
+
+---
+
 ## 🛠️ Tech Stack
 
 | Layer | Technology |

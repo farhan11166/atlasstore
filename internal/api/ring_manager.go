@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/farhan/atlasstore/internal/db"
+	"github.com/farhan/atlasstore/internal/metrics"
 	"github.com/farhan/atlasstore/pkg/ring"
 )
 
@@ -75,6 +76,7 @@ func (rm *RingManager) SyncLoop() {
 			}
 
 			rm.mu.Unlock()
+			metrics.ActiveNodes.Set(float64(len(activeNodes)))
 			time.Sleep(10 * time.Second) // Poll every 10 seconds
 
 		}

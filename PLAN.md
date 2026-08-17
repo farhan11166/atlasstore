@@ -117,19 +117,22 @@ _Target: Weeks 1-4_
 ## Phase 7+ — Future Horizons
 
 ### Phase 7: Consensus / Raft for Cluster State Management
+
 - [x] Allow Storage Nodes to form their own cluster and elect a leader.
 - [x] Nodes agree on cluster membership without relying on PostgreSQL as the single source of truth.
 - [x] Implement HTTP API for node joining and state querying.
 - [x] Gateway queries Raft cluster for active nodes, falling back to PostgreSQL if unreachable.
 
 ### Phase 8-10: Fault Tolerance & Production Features
+
 - [x] Encryption At Rest (AES-GCM 256-bit) — chunks encrypted before hitting the wire.
 - [x] Data Compression (snappy) before encryption.
 - [x] Circuit Breaker pattern for node communication.
-- [ ] Graceful degradation when quorum is lost.
+- [x] Graceful degradation when quorum is lost.
 
 ### Phase 11-12: Observability & Load Testing
-- [ ] Prometheus metrics endpoint on Gateway (request rates, rebalancing operations, node counts).
+
+- [x] Prometheus metrics endpoint on Gateway (request rates, rebalancing operations, node counts).
 - [ ] Grafana dashboard for cluster health visualization.
-- [ ] `k6` or `vegeta` load testing suite.
+- [x] `k6` or `vegeta` load testing suite.
 - [ ] Distributed tracing with OpenTelemetry.

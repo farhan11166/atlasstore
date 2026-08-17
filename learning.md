@@ -703,3 +703,18 @@ To fix this, we implemented a **Pre-Shared Cluster Token** mechanism:
 
 If the token is missing or incorrect, the server instantly returns `403 Forbidden`. This effectively creates an invisible shield around the internal cluster communication.
 
+## 48. Prometheus Observability (Phase 11)
+
+In production systems, you are blind without metrics. If users complain that uploads are failing, you need to know *why* without digging through gigabytes of text logs.
+
+We integrated **Prometheus**, an open-source systems monitoring toolkit:
+1. **The Endpoint:** We exposed an unauthenticated HTTP endpoint at `GET /metrics`.
+2. **The Output:** This endpoint outputs a plaintext file containing key-value metrics. For example, `atlasstore_uploads_total 5`.
+3. **The Scrape:** A Prometheus server is configured to hit `http://gateway:8000/metrics` every 15 seconds. It downloads these numbers and stores them in a time-series database.
+
+We implemented three key metrics using the `promauto` library:
+- **Counters** (`UploadsTotal`, `DownloadsTotal`): These numbers only ever go up. They are perfect for tracking the total number of events (e.g., total files uploaded).
+- **Gauges** (`ActiveNodes`): These numbers can go up *or* down. They are perfect for tracking current state (e.g., how many storage nodes are currently online).
+
+With this data, we can build a Grafana dashboard to visualize exactly how much traffic the system is handling in real-time!
+

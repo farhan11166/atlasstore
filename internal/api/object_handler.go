@@ -16,6 +16,7 @@ import (
 	"github.com/farhan/atlasstore/internal/auth"
 	"github.com/farhan/atlasstore/internal/crypto"
 	"github.com/farhan/atlasstore/internal/db"
+	"github.com/farhan/atlasstore/internal/metrics"
 	"github.com/golang/snappy"
 )
 
@@ -137,6 +138,7 @@ func (h *ObjectHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		ID: objectID, Name: filename,
 		SizeBytes: totalSize, ContentType: contentType,
 	})
+	metrics.UploadsTotal.Inc()
 
 }
 
@@ -208,6 +210,7 @@ func (h *ObjectHandler) Download(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	metrics.DownloadsTotal.Inc()
 }
 
 func (h *ObjectHandler) List(w http.ResponseWriter, r *http.Request) {
