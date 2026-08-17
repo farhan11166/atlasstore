@@ -74,9 +74,13 @@ AtlasStore has been rigorously load-tested to find its breaking point on local h
 - **Hardware:** 12th Gen Intel(R) Core(TM) i5-1235U (12 Cores), 8GB RAM
 
 **Results (Single Machine Peak):**
-- **Throughput:** ~215 Requests per Second (which translates to ~645 HTTP requests/sec due to multipart initialization and completion).
-- **Total Requests Processed:** 4,883
-- **Success Rate:** 92.91%
+| Concurrency (Virtual Users) | Total Requests (15s) | Success Rate | Throughput (Req/Sec) | Notes |
+|---|---|---|---|---|
+| **100** | ~3,260 | 100.00% | ~210 req/s | Perfect stability. |
+| **500** | ~3,464 | 99.83% | ~208 req/s | Slight resource contention. |
+| **2,000** | ~4,883 | 92.91% | ~215 req/s | OS file descriptors and DB connections exhausted. |
+
+*Note: Each recorded "Request" is a full multi-part file upload consisting of 3 separate HTTP round-trips. The Gateway actually processed over 600 HTTP requests per second at peak.*
 
 **Bottleneck Analysis:**
 At 2,000 concurrent users, the Go application itself did not crash. The 7% error rate was caused by hitting physical hardware limits (OS File Descriptors and PostgreSQL `max_connections` pool exhaustion). To scale beyond this, the architecture supports deploying the Gateway behind a load balancer and horizontally scaling the PostgreSQL database.

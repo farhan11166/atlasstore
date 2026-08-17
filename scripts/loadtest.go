@@ -42,7 +42,7 @@ func main() {
 	fmt.Println("✓ Authenticated successfully")
 
 	// 2. Configuration
-	concurrency := 2000
+	concurrency := 100
 	duration := 15 * time.Second
 	
 	var totalRequests int64
