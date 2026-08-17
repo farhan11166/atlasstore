@@ -54,12 +54,11 @@ func NewRouter(cfg *config.Config, database *sql.DB) http.Handler {
 	mux.Handle("POST /multipart/{upload_id}/{part_number}", protected(http.HandlerFunc(objectHandler.UploadPart)))
 	mux.Handle("POST /multipart/{upload_id}/complete", protected(http.HandlerFunc(objectHandler.CompleteMultipart)))
 
+	mux.Handle("GET /metrics", promhttp.Handler())
+
 	// Protect infrastructure endpoints with the cluster secret
 	infraProtected := auth.RequireClusterSecret(cfg.ClusterSecret)
 	mux.Handle("POST /nodes/register", infraProtected(http.HandlerFunc(nodeHandler.Register)))
-
-	// Expose Prometheus metrics
-	mux.Handle("GET /metrics", promhttp.Handler())
 
 	return mux
 }
