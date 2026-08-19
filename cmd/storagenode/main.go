@@ -14,7 +14,6 @@ import (
 
 	hraft "github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
-	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 
 	"github.com/farhan/atlasstore/internal/config"
@@ -22,6 +21,7 @@ import (
 	"github.com/farhan/atlasstore/internal/telemetry"
 	"github.com/farhan/atlasstore/pkg/pb"
 	atlasraft "github.com/farhan/atlasstore/pkg/raft"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 )
 
 func registerWithGateway(gatewayURL, nodeAddress, clusterSecret string) {
@@ -160,10 +160,9 @@ func main() {
 
 	shutdownTracing, err := telemetry.Init(ctx, "atlasstore-storagenode")
 	if err != nil {
-		log.Fatalf("failed to init tracing: %v", err)
+		log.Fatalf("failed to initialise tracing: %v", err)
 	}
-	defer shutdownTracing(context.Background())
-
+	defer shutdownTracing(ctx)
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("failed to load config: %v", err)
@@ -202,7 +201,7 @@ func main() {
 			for !joined {
 				for _, peerAPIAddr := range peers {
 					joinURL := fmt.Sprintf("http://%s/join?id=%s&addr=%s&grpc_addr=%s", peerAPIAddr, raftAddr, raftAddr, "localhost:"+cfg.StorageNodePort)
-					
+
 					req, _ := http.NewRequest("POST", joinURL, nil)
 					req.Header.Set("X-Cluster-Token", cfg.ClusterSecret)
 					resp, err := http.DefaultClient.Do(req)
@@ -229,7 +228,7 @@ func main() {
 		for raftNode.Leader() == "" {
 			time.Sleep(500 * time.Millisecond)
 		}
-		
+
 		// Only announce ourselves directly if WE are the leader (e.g. Node A on bootstrap)
 		// If we are a follower, the Leader already added us when we called /join!
 		if raftNode.State() == hraft.Leader {

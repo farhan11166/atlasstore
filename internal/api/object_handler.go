@@ -76,7 +76,7 @@ func (h *ObjectHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	var totalSize int64
 	var mu sync.Mutex
 
-	g, _ := errgroup.WithContext(ctx)
+	g, _ := errgroup.WithContext(r.Context())
 	chunkIndex := 0
 
 	for {
@@ -107,21 +107,19 @@ func (h *ObjectHandler) Upload(w http.ResponseWriter, r *http.Request) {
 				}
 
 				nodeAddresses := h.RingManager.Ring.GetNodes(hash, h.ReplicationFactor)
+				chunkSpan.RecordError(err)
+				chunkSpan.SetStatus(codes.Error, "encrypt chunk failed")
 				if len(nodeAddresses) == 0 {
-					err := fmt.Errorf("no healthy storage node available")
-					chunkSpan.RecordError(err)
-					chunkSpan.SetStatus(codes.Error, "no healthy storage node available")
-					return err
+					return fmt.Errorf("no healthy storage node available")
 				}
 
 				successNodes, saveErrs := h.StorageClient.SaveChunk(chunkCtx, nodeAddresses, hash, encryptedChunk)
 				quorum := (h.ReplicationFactor / 2) + 1
 				if len(successNodes) < quorum {
 					fmt.Printf("SaveChunk errors in Upload: %v\n", saveErrs)
-					err := fmt.Errorf("upload failed: quorum not met (needed %d, got %d). errors: %v", quorum, len(successNodes), saveErrs)
 					chunkSpan.RecordError(err)
 					chunkSpan.SetStatus(codes.Error, "quorum not met")
-					return err
+					return fmt.Errorf("upload failed: quorum not met (needed %d, got %d). errors: %v", quorum, len(successNodes), saveErrs)
 				}
 				mu.Lock()
 				metas = append(metas, chunkMeta{index: idx, hash: hash, size: int64(n), nodes: successNodes})
@@ -178,36 +176,29 @@ func (h *ObjectHandler) Download(w http.ResponseWriter, r *http.Request) {
 
 	userID := r.Context().Value(auth.UserIDKey).(string)
 	objectID := r.PathValue("id") // to retrive id
+	obj, err := db.GetObjectByID(h.DB, objectID, userID)
+
 	span.SetAttributes(
 		attribute.String("user.id", userID),
 		attribute.String("object.id", objectID),
 	)
 
-	obj, err := db.GetObjectByID(h.DB, objectID, userID)
-
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "get object metadata failed")
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 
 	}
 
 	if obj == nil {
-		span.SetStatus(codes.Error, "object not found")
 		http.Error(w, "object not found", http.StatusNotFound)
 		return
 	}
 	chunks, err := db.GetChunksByObjectID(h.DB, objectID)
 
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "get chunk metadata failed")
 		http.Error(w, "failed to fetch chunk metadata", http.StatusInternalServerError)
 		return
 	}
-
-	span.SetAttributes(attribute.Int("object.chunk_count", len(chunks)))
 
 	w.Header().Set("Content-Type", obj.ContentType)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, obj.Name))
@@ -229,64 +220,45 @@ func (h *ObjectHandler) Download(w http.ResponseWriter, r *http.Request) {
 
 			data, err = h.StorageClient.GetChunk(replicaCtx, nodeAddr, chunk.Hash)
 			if err != nil {
-				replicaSpan.RecordError(err)
-				replicaSpan.SetStatus(codes.Error, "replica fetch failed")
-				replicaSpan.End()
 				fmt.Printf("Warning: Failed to retrieve chunk %s from %s: %v\n", chunk.Hash, nodeAddr, err)
 				continue
 			}
-			replicaSpan.End()
 
 			decryptedData, err := crypto.Decrypt(data, h.EncryptionKey)
 			if err != nil {
-				chunkSpan.RecordError(err)
 				fmt.Printf("Warning: Failed to decrypt chunk %s: %v\n", chunk.Hash, err)
 				continue
 			}
 
 			decompressedData, err := snappy.Decode(nil, decryptedData)
 			if err != nil {
-				chunkSpan.RecordError(err)
 				fmt.Printf("Warning: Failed to decompress chunk %s: %v\n", chunk.Hash, err)
 				continue
 			}
 
 			if actualHash := sha256hex(decompressedData); actualHash != chunk.Hash {
-				err = fmt.Errorf("data corruption on node %s for chunk %s", nodeAddr, chunk.Hash)
-				chunkSpan.RecordError(err)
 				fmt.Printf("Warning: Data corruption on node %s for chunk %s\n", nodeAddr, chunk.Hash)
 				continue
 			}
 
 			data = decompressedData
-			chunkSpan.SetAttributes(
-				attribute.String("chunk.source_node", nodeAddr),
-				attribute.Int("chunk.size_bytes", len(data)),
-			)
+			replicaSpan.End()
 			success = true
 			break
 		}
 
 		if !success {
-			err := fmt.Errorf("all replicas failed or corrupted")
+			http.Error(w, "all replicas failed or corrupted", http.StatusInternalServerError)
 			chunkSpan.RecordError(err)
 			chunkSpan.SetStatus(codes.Error, "replica exhaustion")
 			chunkSpan.End()
-			span.RecordError(err)
-			span.SetStatus(codes.Error, "download failed")
-			http.Error(w, "all replicas failed or corrupted", http.StatusInternalServerError)
-			return
-		}
-
-		if _, err := w.Write(data); err != nil {
-			chunkSpan.RecordError(err)
-			chunkSpan.SetStatus(codes.Error, "response write failed")
-			chunkSpan.End()
-			span.RecordError(err)
-			span.SetStatus(codes.Error, "download response write failed")
 			return
 		}
 		chunkSpan.End()
+
+		if _, err := w.Write(data); err != nil {
+			return
+		}
 	}
 	metrics.DownloadsTotal.Inc()
 }
@@ -349,11 +321,7 @@ func sha256hex(data []byte) string {
 }
 
 func (h *ObjectHandler) InitMultipart(w http.ResponseWriter, r *http.Request) {
-	_, span := tracer.Start(r.Context(), "multipart.init")
-	defer span.End()
-
 	userID := r.Context().Value(auth.UserIDKey).(string)
-	span.SetAttributes(attribute.String("user.id", userID))
 
 	var req struct {
 		Filename    string `json:"filename"`
@@ -361,8 +329,6 @@ func (h *ObjectHandler) InitMultipart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "invalid request body")
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
@@ -370,24 +336,18 @@ func (h *ObjectHandler) InitMultipart(w http.ResponseWriter, r *http.Request) {
 	uploadID, err := db.CreateMultipartUpload(h.DB, userID, req.Filename, req.ContentType)
 
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "create multipart upload failed")
 		fmt.Println("DB ERROR:", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-
-	span.SetAttributes(
-		attribute.String("upload.id", uploadID),
-		attribute.String("object.filename", req.Filename),
-	)
 
 	w.Header().Set("Content-Type", "application/json")
 
 	json.NewEncoder(w).Encode(map[string]string{"upload_id": uploadID})
 }
 func (h *ObjectHandler) UploadPart(w http.ResponseWriter, r *http.Request) {
-	ctx, span := tracer.Start(r.Context(), "multipart.upload_part")
+
+	ctx, span := tracer.Start(r.Context(), "storage.SaveChunk")
 	defer span.End()
 
 	uploadID := r.PathValue("upload_id")
@@ -396,41 +356,28 @@ func (h *ObjectHandler) UploadPart(w http.ResponseWriter, r *http.Request) {
 		attribute.String("upload.id", uploadID),
 		attribute.String("part.number", partStr),
 	)
-
 	var partNumber int
 	fmt.Sscanf(partStr, "%d", &partNumber)
 
 	chunkData, err := io.ReadAll(io.LimitReader(r.Body, int64(h.ChunkSizeMB*1024*1024+1024)))
 	if err != nil || len(chunkData) == 0 {
-		if err == nil {
-			err = fmt.Errorf("empty part body")
-		}
 		span.RecordError(err)
-		span.SetStatus(codes.Error, "read part failed")
+		span.SetStatus(codes.Error, "no data to read")
 		http.Error(w, "failed to read part", http.StatusBadRequest)
 		return
 	}
 
 	hash := sha256hex(chunkData)
-	span.SetAttributes(
-		attribute.String("chunk.hash", hash),
-		attribute.Int("chunk.size_bytes", len(chunkData)),
-	)
 
 	compressedChunk := snappy.Encode(nil, chunkData)
 	encryptedChunk, err := crypto.Encrypt(compressedChunk, h.EncryptionKey)
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "encrypt part failed")
 		http.Error(w, fmt.Sprintf("Failed to encrypt chunk: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	nodeAddresses := h.RingManager.Ring.GetNodes(hash, h.ReplicationFactor)
 	if len(nodeAddresses) == 0 {
-		err := fmt.Errorf("no healthy storage node available")
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "no healthy storage node available")
 		http.Error(w, "no healthy storage node available", http.StatusServiceUnavailable)
 		return
 	}
@@ -439,17 +386,11 @@ func (h *ObjectHandler) UploadPart(w http.ResponseWriter, r *http.Request) {
 	quorum := (h.ReplicationFactor / 2) + 1
 	if len(successNodes) < quorum {
 		fmt.Printf("SaveChunk errors in UploadPart: %v\n", saveErrs)
-		err := fmt.Errorf("multipart save quorum not met: needed %d, got %d", quorum, len(successNodes))
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "quorum not met")
 		http.Error(w, "failed to store chunk on storage node (quorum not met)", http.StatusInternalServerError)
 		return
 	}
-	span.SetAttributes(attribute.Int("chunk.saved_replicas", len(successNodes)))
 
 	if err := db.CreateMultipartChunk(h.DB, uploadID, partNumber, hash, int64(len(chunkData)), successNodes); err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "save multipart metadata failed")
 		http.Error(w, "failed to save chunk metadata", http.StatusInternalServerError)
 		return
 	}
@@ -457,23 +398,13 @@ func (h *ObjectHandler) UploadPart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ObjectHandler) CompleteMultipart(w http.ResponseWriter, r *http.Request) {
-	_, span := tracer.Start(r.Context(), "multipart.complete")
-	defer span.End()
-
 	uploadID := r.PathValue("upload_id")
 	userID := r.Context().Value(auth.UserIDKey).(string)
-	span.SetAttributes(
-		attribute.String("upload.id", uploadID),
-		attribute.String("user.id", userID),
-	)
 	objectID, err := db.CompleteMultipartUpload(h.DB, uploadID, userID)
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "complete multipart upload failed")
 		http.Error(w, "failed to complete upload", http.StatusInternalServerError)
 		return
 	}
-	span.SetAttributes(attribute.String("object.id", objectID))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"object_id": objectID})
 }

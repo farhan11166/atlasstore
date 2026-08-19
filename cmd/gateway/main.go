@@ -16,9 +16,9 @@ func main() {
 
 	shutdownTracing, err := telemetry.Init(ctx, "atlasstore-gateway")
 	if err != nil {
-		log.Fatalf("failed to init tracing: %v", err)
+		log.Fatalf("failed to initialize tracing: %v", err)
 	}
-	defer shutdownTracing(context.Background())
+	defer shutdownTracing(ctx)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -37,7 +37,6 @@ func main() {
 	}
 	log.Println("Migrations applied")
 	router := api.NewRouter(cfg, database)
-	router = telemetry.HTTP("gateway-http", router)
 	addr := ":" + cfg.GatewayPort
 	log.Printf("Gateway listening on %s", addr)
 	if err := http.ListenAndServe(addr, router); err != nil {
