@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -13,10 +14,12 @@ import (
 
 	hraft "github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 
 	"github.com/farhan/atlasstore/internal/config"
 	"github.com/farhan/atlasstore/internal/storage"
+	"github.com/farhan/atlasstore/internal/telemetry"
 	"github.com/farhan/atlasstore/pkg/pb"
 	atlasraft "github.com/farhan/atlasstore/pkg/raft"
 )
@@ -153,6 +156,14 @@ func startRaft(raftAddr, raftDataDir, nodeGRPCAddr string, peers []string, fsm *
 }
 
 func main() {
+	ctx := context.Background()
+
+	shutdownTracing, err := telemetry.Init(ctx, "atlasstore-storagenode")
+	if err != nil {
+		log.Fatalf("failed to init tracing: %v", err)
+	}
+	defer shutdownTracing(context.Background())
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("failed to load config: %v", err)
@@ -236,6 +247,7 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 	grpcServer := grpc.NewServer(
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 		grpc.MaxRecvMsgSize(10*1024*1024), // 10 MB limit
 		grpc.MaxSendMsgSize(10*1024*1024),
 	)

@@ -135,4 +135,4 @@ _Target: Weeks 1-4_
 - [x] Prometheus metrics endpoint on Gateway (request rates, rebalancing operations, node counts).
 - [ ] Grafana dashboard for cluster health visualization.
 - [x] `k6` or `vegeta` load testing suite.
-- [ ] Distributed tracing with OpenTelemetry.
+- [x] Distributed tracing with OpenTelemetry.

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/farhan/atlasstore/pkg/pb"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -109,9 +110,10 @@ func (c *StorageClient) getClient(address string) (pb.StorageNodeClient, error) 
 	}
 
 	// Connect via gRPC (increase limits to 10MB)
-	conn, err := grpc.Dial(
+	conn, err := grpc.NewClient(
 		address,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallRecvMsgSize(10*1024*1024),
 			grpc.MaxCallSendMsgSize(10*1024*1024),
@@ -124,7 +126,7 @@ func (c *StorageClient) getClient(address string) (pb.StorageNodeClient, error) 
 	return pb.NewStorageNodeClient(conn), nil
 }
 
-func (c *StorageClient) SaveChunk(nodeAddresses []string, hash string, data []byte) ([]string, []error) {
+func (c *StorageClient) SaveChunk(ctx context.Context, nodeAddresses []string, hash string, data []byte) ([]string, []error) {
 	var errs []error
 	var successAddrs []string
 	var wg sync.WaitGroup
@@ -141,7 +143,7 @@ func (c *StorageClient) SaveChunk(nodeAddresses []string, hash string, data []by
 					return err
 				}
 
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 				defer cancel()
 
 				_, err = client.SaveChunk(ctx, &pb.SaveChunkRequest{Hash: hash, Data: data})
@@ -163,7 +165,7 @@ func (c *StorageClient) SaveChunk(nodeAddresses []string, hash string, data []by
 	return successAddrs, errs
 }
 
-func (c *StorageClient) GetChunk(nodeAddress string, hash string) ([]byte, error) {
+func (c *StorageClient) GetChunk(ctx context.Context, nodeAddress string, hash string) ([]byte, error) {
 	var resultData []byte
 
 	err := c.executewithBreaker(nodeAddress, func() error {
@@ -172,7 +174,7 @@ func (c *StorageClient) GetChunk(nodeAddress string, hash string) ([]byte, error
 			return err
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 
 		resp, err := client.GetChunk(ctx, &pb.GetChunkRequest{Hash: hash})
@@ -186,14 +188,14 @@ func (c *StorageClient) GetChunk(nodeAddress string, hash string) ([]byte, error
 	return resultData, err
 }
 
-func (c *StorageClient) DeleteChunk(nodeAddress string, hash string) error {
+func (c *StorageClient) DeleteChunk(ctx context.Context, nodeAddress string, hash string) error {
 	return c.executewithBreaker(nodeAddress, func() error {
 		client, err := c.getClient(nodeAddress)
 		if err != nil {
 			return err
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 
 		_, err = client.DeleteChunk(ctx, &pb.DeleteChunkRequest{Hash: hash})
@@ -202,14 +204,14 @@ func (c *StorageClient) DeleteChunk(nodeAddress string, hash string) error {
 }
 
 // Health is a helper to check if a node is alive via gRPC
-func (c *StorageClient) Health(nodeAddress string) bool {
+func (c *StorageClient) Health(ctx context.Context, nodeAddress string) bool {
 	err := c.executewithBreaker(nodeAddress, func() error {
 		client, err := c.getClient(nodeAddress)
 		if err != nil {
 			return err
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 
 		_, err = client.Health(ctx, &pb.HealthRequest{})

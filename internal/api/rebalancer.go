@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"log"
 	"time"
 
@@ -32,6 +33,7 @@ func StartRebalancer(ringManager *RingManager, storageClient *StorageClient, rep
 			}
 
 			for _, chunk := range chunks {
+				ctx := context.Background()
 
 				expectedNodes := ringManager.Ring.GetNodes(chunk.Hash, replicationFactor)
 
@@ -72,7 +74,7 @@ func StartRebalancer(ringManager *RingManager, storageClient *StorageClient, rep
 				var chunkData []byte
 				var getErr error
 				for n := range currentMap {
-					chunkData, getErr = storageClient.GetChunk(n, chunk.Hash)
+					chunkData, getErr = storageClient.GetChunk(ctx, n, chunk.Hash)
 					if getErr == nil {
 						break
 					}
@@ -85,7 +87,7 @@ func StartRebalancer(ringManager *RingManager, storageClient *StorageClient, rep
 
 				// Upload to missing nodes
 				if len(missingNodes) > 0 {
-					successNodes, errs := storageClient.SaveChunk(missingNodes, chunk.Hash, chunkData)
+					successNodes, errs := storageClient.SaveChunk(ctx, missingNodes, chunk.Hash, chunkData)
 					if len(errs) > 0 {
 						log.Printf("Rebalancer: encountered errors saving chunk %s to some new nodes: %v", chunk.Hash, errs)
 					}
@@ -97,7 +99,7 @@ func StartRebalancer(ringManager *RingManager, storageClient *StorageClient, rep
 
 				// Delete from obsolete nodes
 				for _, n := range obsoleteNodes {
-					err := storageClient.DeleteChunk(n, chunk.Hash)
+					err := storageClient.DeleteChunk(ctx, n, chunk.Hash)
 					if err != nil {
 						log.Printf("Rebalancer: failed to delete chunk %s from %s", chunk.Hash, n)
 					}

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"log"
 	"time"
@@ -20,7 +21,7 @@ func StartHealthChecker(database *sql.DB, storageClient *StorageClient) {
 
 			for _, node := range nodes {
 				go func(n db.Node) {
-					isAlive := storageClient.Health(node.Address)
+					isAlive := storageClient.Health(context.Background(), node.Address)
 					db.UpdateNodeStatus(database, n.Address, isAlive)
 
 				}(node)
