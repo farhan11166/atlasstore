@@ -1,6 +1,6 @@
 # AtlasStore
 
-> 🎯 **Status: Phase 6 Complete — Consistent Hashing & Rebalancing** | Actively building Phase 7 (Raft Consensus)
+> 🎯 **Status: Feature Complete (Phases 1-12) — Distributed Object Storage Engine with Raft Consensus, Consistent Hashing, and Load Testing**
 
 > A distributed object storage platform built in Go — inspired by Amazon S3 and MinIO.
 
@@ -27,7 +27,11 @@ AtlasStore separates the **Control Plane** (API Gateway) from the **Data Plane**
 | 6 | Consistent Hashing ring with virtual nodes | ✅ Done |
 | 6 | Deterministic chunk placement via Hash Ring | ✅ Done |
 | 6 | Background Rebalancing Worker | ✅ Done |
-| 8* | Encryption at rest (AES-GCM) | ✅ Done |
+| 7 | Raft Consensus (Leader Election & Cluster State) | ✅ Done |
+| 8-10 | Fault Tolerance (Circuit Breakers, Quorum Degradation) | ✅ Done |
+| 8-10 | AES-GCM Encryption & Snappy Data Compression | ✅ Done |
+| 11 | Prometheus Metrics (Uploads, active nodes, etc) | ✅ Done |
+| 12 | Load Testing Suite (2000+ virtual users) | ✅ Done |
 
 ---
 
@@ -39,17 +43,22 @@ AtlasStore separates the **Control Plane** (API Gateway) from the **Data Plane**
               ▼
    ┌──────────────────────────────────────┐
    │          API Gateway                 │ ← "Brain" / Control Plane
-   │  - JWT Auth                          │
+   │  - JWT Auth / Circuit Breakers       │
    │  - Consistent Hash Ring (50 vNodes)  │
-   │  - Background Health Checker         │
    │  - Background Rebalancer             │ ── (Metadata) ──► [ PostgreSQL DB ]
-   │  - Encryption (AES-GCM)              │
+   │  - AES-GCM Encrypt & Snappy Compress │
+   │  - Prometheus Metrics Exporter       │
    └──────────────────────────────────────┘
               │ (internal gRPC)
       ┌───────┼───────┐
       ▼       ▼       ▼
-   [Node A] [Node B] [Node C]    ← "Muscles" / Data Plane
-     Disk    Disk     Disk       ← Encrypted chunk files (named by SHA-256 hash)
+   ┌──────────────────────────────────────┐
+   │ [Node A] [Node B] [Node C]           │ ← "Muscles" / Data Plane
+   │   │        │        │                │
+   │  Disk     Disk     Disk              │ ← Encrypted chunk files (SHA-256)
+   │                                      │
+   │       [Raft Consensus Cluster]       │ ← Maintains Active Node State
+   └──────────────────────────────────────┘
 ```
 
 ### How Chunk Placement Works
